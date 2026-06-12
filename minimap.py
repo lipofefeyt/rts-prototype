@@ -2,10 +2,9 @@ import pygame
 from pathfinding import CELL_SIZE
 from map import TILE_COLORS
 
-MINI_W = 200
-MINI_H = 110    # preserves 40:22 cell ratio
-MINI_X = 1072   # WIDTH(1280) - MINI_W - 8
-MINI_Y = 522    # PANEL_Y(640) - MINI_H - 8
+MINI_W  = 200
+MINI_H  = 110   # preserves 40:22 cell ratio
+_PANEL_H = 80   # must match main.PANEL_H
 
 _BORDER = (100, 100, 120)
 _TEAM_DOT = {0: (80, 150, 255), 1: (255, 80, 80), -1: (220, 200, 50)}
@@ -48,4 +47,7 @@ class Minimap:
             pygame.draw.circle(self._buf, color, (mx, my), 2)
 
         pygame.draw.rect(self._buf, _BORDER, (0, 0, MINI_W, MINI_H), 1)
-        surface.blit(self._buf, (MINI_X, MINI_Y))
+
+        # Position always anchored to bottom-right of whatever canvas is passed in
+        sw, sh = surface.get_size()
+        surface.blit(self._buf, (sw - MINI_W - 8, sh - _PANEL_H - MINI_H - 8))
