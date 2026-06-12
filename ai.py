@@ -2,11 +2,12 @@ import math
 import pygame
 from building import TownHall, Barracks, Farm, GoldMine
 from unit import Unit, Worker
+from stats import UNIT_STATS
 
 # Difficulty knobs (issue #6)
-ARMY_THRESHOLD = 4    # footmen needed before launching a wave
+ARMY_THRESHOLD = 4    # combat units needed before launching a wave
 WAVE_INTERVAL = 45.0  # seconds between waves
-WORKER_REPLACE_COST = 75
+WORKER_REPLACE_COST = UNIT_STATS["worker"].cost
 
 
 class AIController:
@@ -69,10 +70,15 @@ class AIController:
             return
         food_cap = sum(b.FOOD for b in self.buildings if isinstance(b, Farm) and b.team == self.team)
         food_used = sum(1 for u in self.units if u.team == self.team)
-        if (food_used < food_cap
-                and len(barracks.queue) < Barracks.MAX_QUEUE
-                and self.gold[self.team] >= Barracks.TRAIN_COST):
-            barracks.enqueue(self.gold)
+        if food_used >= food_cap or len(barracks.queue) >= Barracks.MAX_QUEUE:
+            return
+        # Train Archers every third unit for variety
+        army_size = len(self._army())
+        unit_type = "archer" if army_size % 3 == 2 else "footman"
+        if self.gold[self.team] < UNIT_STATS[unit_type].cost:
+            unit_type = "footman"  # fall back to cheaper option
+        if self.gold[self.team] >= UNIT_STATS[unit_type].cost:
+            barracks.enqueue(self.gold, unit_type)
 
     # --- Attack ---
 

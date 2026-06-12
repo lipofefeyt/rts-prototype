@@ -1,4 +1,5 @@
 import pygame
+from stats import UNIT_STATS
 
 _BAR_W, _BAR_H = 80, 6
 
@@ -62,44 +63,48 @@ class GoldMine(Building):
 class Barracks(Building):
     label = "Barracks"
     W, H = 128, 128
-    TRAIN_COST = 135
-    TRAIN_TIME = 8.0
     MAX_QUEUE = 5
+
+    # Progress-bar color per unit type
+    _BAR_COLORS = {"footman": (80, 180, 255), "archer": (80, 220, 160)}
 
     def __init__(self, x: int, y: int, team: int):
         color = (40, 70, 120) if team == 0 else (120, 40, 40)
         super().__init__(pygame.Rect(x, y, self.W, self.H), team, 800, color)
-        self.queue: list[float] = []  # remaining seconds per queued unit
+        self.queue: list[tuple[str, float]] = []  # (unit_type, seconds_remaining)
 
-    def enqueue(self, gold: dict) -> bool:
+    def enqueue(self, gold: dict, unit_type: str = "footman") -> bool:
         if len(self.queue) >= self.MAX_QUEUE:
             return False
-        if gold.get(self.team, 0) < self.TRAIN_COST:
+        s = UNIT_STATS[unit_type]
+        if gold.get(self.team, 0) < s.cost:
             return False
-        gold[self.team] -= self.TRAIN_COST
-        self.queue.append(self.TRAIN_TIME)
+        gold[self.team] -= s.cost
+        self.queue.append((unit_type, s.train_time))
         return True
 
-    def update(self, dt: float) -> int:
-        """Tick the training queue; returns number of units ready to spawn."""
+    def update(self, dt: float) -> list[str]:
+        """Tick training queue; returns list of unit_type strings ready to spawn."""
         if not self.queue:
-            return 0
-        self.queue[0] -= dt
-        spawned = 0
-        while self.queue and self.queue[0] <= 0:
-            self.queue.pop(0)
-            spawned += 1
+            return []
+        ut, remaining = self.queue[0]
+        self.queue[0] = (ut, remaining - dt)
+        spawned: list[str] = []
+        while self.queue and self.queue[0][1] <= 0:
+            spawned.append(self.queue.pop(0)[0])
         return spawned
 
     def draw(self, surface: pygame.Surface) -> None:
         super().draw(surface)
-        # Training progress bar just above the building health bar
         if self.queue:
-            ratio = 1.0 - self.queue[0] / self.TRAIN_TIME
+            ut, remaining = self.queue[0]
+            total = UNIT_STATS[ut].train_time
+            ratio = 1.0 - remaining / total
             x = self.rect.centerx - 40
             y = self.rect.top - 20
             pygame.draw.rect(surface, (40, 40, 40), (x, y, 80, 5))
-            pygame.draw.rect(surface, (80, 180, 255), (x, y, int(80 * ratio), 5))
+            bar_color = self._BAR_COLORS.get(ut, (80, 180, 255))
+            pygame.draw.rect(surface, bar_color, (x, y, int(80 * ratio), 5))
 
 
 class Farm(Building):
