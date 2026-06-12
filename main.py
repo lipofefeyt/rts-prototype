@@ -11,6 +11,7 @@ FORMATION_SPACING = 90
 PANEL_H = 80
 PANEL_Y = HEIGHT - PANEL_H
 TRAIN_BTN = pygame.Rect(10, PANEL_Y + 22, 195, 36)
+RESTART_BTN = pygame.Rect(WIDTH // 2 - 80, HEIGHT // 2 + 50, 160, 40)
 
 
 def make_sprite(color: tuple) -> pygame.Surface:
@@ -53,7 +54,6 @@ def food_stats(buildings: list[Building], units: list[Unit]) -> tuple[int, int]:
 def draw_hud(screen: pygame.Surface, font: pygame.font.Font,
              gold: dict, buildings: list[Building], units: list[Unit],
              selected_building: Building | None, ai_state: str = "") -> None:
-    # Top bar
     pygame.draw.rect(screen, (20, 20, 28), (0, 0, WIDTH, 28))
     food_used, food_cap = food_stats(buildings, units)
     screen.blit(font.render(f"Gold: {gold[0]}", True, (255, 215, 0)), (10, 5))
@@ -67,7 +67,6 @@ def draw_hud(screen: pygame.Surface, font: pygame.font.Font,
     if selected_building is None:
         return
 
-    # Bottom panel
     pygame.draw.rect(screen, (20, 22, 32), (0, PANEL_Y, WIDTH, PANEL_H))
     pygame.draw.line(screen, (70, 70, 100), (0, PANEL_Y), (WIDTH, PANEL_Y))
     info = f"{selected_building.label}   HP {selected_building.hp}/{selected_building.max_hp}"
@@ -75,33 +74,49 @@ def draw_hud(screen: pygame.Surface, font: pygame.font.Font,
 
     if isinstance(selected_building, Barracks) and selected_building.team == 0:
         food_used, food_cap = food_stats(buildings, units)
-        can_afford = gold[0] >= Barracks.TRAIN_COST
-        can_food = food_used < food_cap
-        can_queue = len(selected_building.queue) < Barracks.MAX_QUEUE
-        enabled = can_afford and can_food and can_queue
+        enabled = (gold[0] >= Barracks.TRAIN_COST
+                   and food_used < food_cap
+                   and len(selected_building.queue) < Barracks.MAX_QUEUE)
         btn_col = (45, 90, 45) if enabled else (55, 55, 55)
         pygame.draw.rect(screen, btn_col, TRAIN_BTN)
         pygame.draw.rect(screen, (80, 130, 80) if enabled else (80, 80, 80), TRAIN_BTN, 1)
-        screen.blit(font.render(f"Train Footman  {Barracks.TRAIN_COST}g", True, (220, 220, 220)), (TRAIN_BTN.x + 6, TRAIN_BTN.y + 9))
-
-        # Queue slot indicators
+        screen.blit(font.render(f"Train Footman  {Barracks.TRAIN_COST}g", True, (220, 220, 220)),
+                    (TRAIN_BTN.x + 6, TRAIN_BTN.y + 9))
         for i in range(Barracks.MAX_QUEUE):
             sx = TRAIN_BTN.right + 14 + i * 22
             sy = PANEL_Y + 30
             if i < len(selected_building.queue):
-                col = (80, 220, 80) if i == 0 else (80, 130, 220)
-                pygame.draw.rect(screen, col, (sx, sy, 16, 16))
+                pygame.draw.rect(screen, (80, 220, 80) if i == 0 else (80, 130, 220), (sx, sy, 16, 16))
             else:
                 pygame.draw.rect(screen, (50, 50, 60), (sx, sy, 16, 16), 1)
 
 
-def main():
-    pygame.init()
-    screen = pygame.display.set_mode((WIDTH, HEIGHT))
-    pygame.display.set_caption("RTS Prototype")
-    clock = pygame.time.Clock()
-    font = pygame.font.Font(None, 26)
+def draw_game_over(screen: pygame.Surface, font: pygame.font.Font,
+                   big_font: pygame.font.Font, result: str, elapsed: float) -> None:
+    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 170))
+    screen.blit(overlay, (0, 0))
 
+    title = "VICTORY!" if result == "victory" else "DEFEAT"
+    color = (255, 215, 0) if result == "victory" else (255, 60, 60)
+    t = big_font.render(title, True, color)
+    screen.blit(t, (WIDTH // 2 - t.get_width() // 2, HEIGHT // 2 - 110))
+
+    ts = font.render(f"Elapsed: {int(elapsed)} s", True, (200, 200, 200))
+    screen.blit(ts, (WIDTH // 2 - ts.get_width() // 2, HEIGHT // 2 - 20))
+
+    pygame.draw.rect(screen, (45, 90, 45), RESTART_BTN)
+    pygame.draw.rect(screen, (80, 140, 80), RESTART_BTN, 2)
+    rs = font.render("Restart", True, (220, 220, 220))
+    screen.blit(rs, (RESTART_BTN.centerx - rs.get_width() // 2,
+                     RESTART_BTN.centery - rs.get_height() // 2))
+
+
+def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
+             font: pygame.font.Font, big_font: pygame.font.Font) -> bool:
+    """Play one match.  Returns True to restart, False to quit."""
+
+    # --- Sprites ---
     try:
         raw = pygame.image.load("assets/footman.png").convert_alpha()
         player_sprite = pygame.transform.scale(raw, (128, 128))
@@ -109,73 +124,66 @@ def main():
     except FileNotFoundError:
         player_sprite = make_sprite((70, 130, 180))
         enemy_sprite = make_sprite((180, 50, 50))
-
-    worker_sprite = make_sprite((120, 170, 100))        # always defined
+    worker_sprite = make_sprite((120, 170, 100))
     enemy_worker_sprite = make_sprite((170, 110, 110))
 
+    # --- Map (tile-based; no explicit add_obstacle calls needed) ---
     game_map = GameMap(WIDTH, HEIGHT)
-    game_map.add_obstacle(pygame.Rect(500, 200, 128, 256))
-    game_map.add_obstacle(pygame.Rect(800, 400, 200, 64))
 
-    # --- World setup ---
+    # --- Buildings ---
     buildings: list[Building] = [
-        # Player base (left)
         TownHall(30, 260, team=0),
         Barracks(30, 420, team=0),
         Farm(200, 420, team=0),
         Farm(310, 420, team=0),
-        # Enemy base (right)
         TownHall(1090, 260, team=1),
         Barracks(940, 260, team=1),
         Farm(940, 420, team=1),
         Farm(1090, 420, team=1),
-        # Neutral gold mines
-        GoldMine(40, 110),     # player-side
-        GoldMine(1100, 110),   # enemy-side
+        GoldMine(40, 110),      # player-side
+        GoldMine(1100, 110),    # enemy-side
     ]
-
     player_hall = next(b for b in buildings if isinstance(b, TownHall) and b.team == 0)
 
+    # --- Units ---
     units: list[Unit] = [
         Unit(280, 330, player_sprite, team=0),
         Unit(380, 330, player_sprite, team=0),
         Worker(180, 360, worker_sprite, team=0),
-        # Enemy starting force
         Unit(1040, 360, enemy_sprite, team=1),
         Worker(1200, 380, enemy_worker_sprite, team=1),
     ]
 
     gold: dict[int, int] = {0: 500, 1: 500}
-
-    ai = AIController(
-        team=1,
-        buildings=buildings,
-        units=units,
-        gold=gold,
-        game_map=game_map,
-        enemy_sprite=enemy_sprite,
-        worker_sprite=enemy_worker_sprite,
-    )
     selected: list[Unit] = []
     selected_building: Building | None = None
-
     drag_start: pygame.Vector2 | None = None
     drag_current: pygame.Vector2 | None = None
+    game_over: str | None = None
+    elapsed: float = 0.0
+
+    ai = AIController(
+        team=1, buildings=buildings, units=units, gold=gold,
+        game_map=game_map, enemy_sprite=enemy_sprite, worker_sprite=enemy_worker_sprite,
+    )
 
     while True:
         dt = clock.tick(FPS) / 1000.0
 
+        # ---- Events ----
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                pygame.quit()
-                return
+                return False
             if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                pygame.quit()
-                return
+                return False
+
+            if game_over is not None:
+                if event.type == pygame.MOUSEBUTTONDOWN and RESTART_BTN.collidepoint(event.pos):
+                    return True
+                continue  # freeze all other input
 
             if event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1:
-                    # Panel button takes priority over drag
                     if (selected_building is not None
                             and isinstance(selected_building, Barracks)
                             and TRAIN_BTN.collidepoint(event.pos)):
@@ -183,32 +191,36 @@ def main():
                         if food_used < food_cap:
                             selected_building.enqueue(gold)
                     elif event.pos[1] > PANEL_Y and selected_building is not None:
-                        pass  # clicked inside panel but not on a button — ignore
+                        pass  # swallow panel clicks that miss buttons
                     else:
                         drag_start = pygame.Vector2(event.pos)
                         drag_current = pygame.Vector2(event.pos)
 
                 elif event.button == 3 and selected:
-                    enemy_hit = next((u for u in units if u.team == 1 and u.contains_point(event.pos)), None)
-                    mine_hit = next((b for b in buildings if isinstance(b, GoldMine) and b.contains_point(event.pos)), None)
+                    enemy_unit = next((u for u in units if u.team == 1 and u.contains_point(event.pos)), None)
+                    enemy_bldg = next((b for b in buildings if b.team == 1 and b.contains_point(event.pos)), None)
+                    mine = next((b for b in buildings if isinstance(b, GoldMine) and b.contains_point(event.pos)), None)
 
-                    if enemy_hit:
+                    if enemy_unit:
                         for u in selected:
-                            u.order_attack(enemy_hit)
-                    elif mine_hit:
+                            u.order_attack(enemy_unit)
+                    elif enemy_bldg:
+                        for u in selected:
+                            u.order_attack(enemy_bldg)
+                    elif mine:
                         movers: list[Unit] = []
                         for u in selected:
                             if isinstance(u, Worker):
-                                u.order_harvest(mine_hit, player_hall, game_map)
+                                u.order_harvest(mine, player_hall, game_map)
                             else:
                                 movers.append(u)
                         if movers:
-                            targets = formation_targets(pygame.Vector2(event.pos), len(movers))
-                            for u, tgt in zip(movers, targets):
+                            tgts = formation_targets(pygame.Vector2(event.pos), len(movers))
+                            for u, tgt in zip(movers, tgts):
                                 u.move_to(game_map.find_path(u.pos, tgt))
                     else:
-                        targets = formation_targets(pygame.Vector2(event.pos), len(selected))
-                        for u, tgt in zip(selected, targets):
+                        tgts = formation_targets(pygame.Vector2(event.pos), len(selected))
+                        for u, tgt in zip(selected, tgts):
                             u.move_to(game_map.find_path(u.pos, tgt))
 
             elif event.type == pygame.MOUSEMOTION and drag_start is not None:
@@ -219,7 +231,6 @@ def main():
                 delta = end - drag_start
 
                 if delta.length() > 4:
-                    # Box select — units only
                     sel_rect = pygame.Rect(
                         int(min(drag_start.x, end.x)), int(min(drag_start.y, end.y)),
                         int(abs(delta.x)), int(abs(delta.y)),
@@ -229,7 +240,6 @@ def main():
                         selected_building.selected = False
                         selected_building = None
                 else:
-                    # Single click — buildings first, then units
                     bldg = next((b for b in buildings if b.team == 0 and b.contains_point(event.pos)), None)
                     if bldg:
                         if selected_building:
@@ -247,37 +257,46 @@ def main():
                 drag_start = None
                 drag_current = None
 
-        # --- Update ---
-        ai.update(dt)
+        # ---- Update (frozen when game over) ----
+        if game_over is None:
+            elapsed += dt
+            ai.update(dt)
 
-        player_units = [u for u in units if u.team == 0]
-        enemy_units = [u for u in units if u.team == 1]
-        for u in player_units:
-            u.update(dt, enemy_units, game_map)
-        for u in enemy_units:
-            u.update(dt, player_units, game_map)
+            player_units = [u for u in units if u.team == 0]
+            enemy_units = [u for u in units if u.team == 1]
+            for u in player_units:
+                u.update(dt, enemy_units, game_map)
+            for u in enemy_units:
+                u.update(dt, player_units, game_map)
 
-        # Collect worker gold deliveries (all teams)
-        for u in units:
-            if isinstance(u, Worker):
-                gold[u.team] += u.gold_delivered
-                u.gold_delivered = 0
+            for u in units:
+                if isinstance(u, Worker):
+                    gold[u.team] += u.gold_delivered
+                    u.gold_delivered = 0
 
-        # Spawn trained units from Barracks
-        for b in buildings:
-            if isinstance(b, Barracks):
-                n = b.update(dt)
-                for _ in range(n):
-                    sp = pygame.Vector2(b.rect.right + 40, b.rect.centery)
-                    sprite = player_sprite if b.team == 0 else enemy_sprite
-                    units.append(Unit(sp.x, sp.y, sprite, team=b.team))
+            for b in buildings:
+                if isinstance(b, Barracks):
+                    n = b.update(dt)
+                    for _ in range(n):
+                        sp = pygame.Vector2(b.rect.right + 40, b.rect.centery)
+                        sprite = player_sprite if b.team == 0 else enemy_sprite
+                        units.append(Unit(sp.x, sp.y, sprite, team=b.team))
 
-        # Reap dead units
-        units = [u for u in units if u.is_alive()]
-        selected = [u for u in selected if u.is_alive()]
+            units = [u for u in units if u.is_alive()]
+            selected = [u for u in selected if u.is_alive()]
 
-        # --- Draw ---
-        screen.fill((30, 30, 30))
+            buildings = [b for b in buildings if b.is_alive()]
+            if selected_building is not None and not selected_building.is_alive():
+                selected_building.selected = False
+                selected_building = None
+
+            # Win / lose
+            if not any(isinstance(b, TownHall) and b.team == 1 for b in buildings):
+                game_over = "victory"
+            elif not any(isinstance(b, TownHall) and b.team == 0 for b in buildings):
+                game_over = "defeat"
+
+        # ---- Draw ----
         game_map.draw(screen)
 
         for b in buildings:
@@ -285,7 +304,6 @@ def main():
         for u in units:
             u.draw(screen)
 
-        # Box selection overlay
         if drag_start is not None and drag_current is not None:
             delta = drag_current - drag_start
             if delta.length() > 4:
@@ -298,7 +316,25 @@ def main():
                 pygame.draw.rect(screen, (0, 255, 0), (rx, ry, rw, rh), 1)
 
         draw_hud(screen, font, gold, buildings, units, selected_building, ai.state)
+
+        if game_over is not None:
+            draw_game_over(screen, font, big_font, game_over, elapsed)
+
         pygame.display.flip()
+
+
+def main():
+    pygame.init()
+    screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    pygame.display.set_caption("RTS Prototype")
+    clock = pygame.time.Clock()
+    font = pygame.font.Font(None, 26)
+    big_font = pygame.font.Font(None, 96)
+
+    while run_game(screen, clock, font, big_font):
+        pass
+
+    pygame.quit()
 
 
 if __name__ == "__main__":

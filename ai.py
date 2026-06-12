@@ -33,6 +33,7 @@ class AIController:
         self._wave_timer = max(0.0, self._wave_timer - dt)
         self._tick_workers()
         self._tick_training()
+        self._tick_siege()   # idle units at player base finish the job
 
         if self.state == "gather":
             if len(self._army()) >= ARMY_THRESHOLD and self._wave_timer == 0.0:
@@ -76,13 +77,13 @@ class AIController:
     # --- Attack ---
 
     def _do_attack(self) -> None:
+        """March the whole army toward the player base. Auto-aggro handles en-route combat."""
         player_hall = next(
             (b for b in self.buildings if isinstance(b, TownHall) and b.team != self.team), None
         )
         army = self._army()
         if not player_hall or not army:
             return
-        # Formation march on player Town Hall
         cols = max(1, math.ceil(math.sqrt(len(army))))
         total_w = (cols - 1) * 100
         total_h = (math.ceil(len(army) / cols) - 1) * 100
@@ -94,6 +95,18 @@ class AIController:
                 player_hall.pos.y - total_h / 2 + r * 100,
             )
             u.move_to(self.game_map.find_path(u.pos, tgt))
+
+    def _tick_siege(self) -> None:
+        """Units that arrive at the player base with no remaining enemies switch to attacking the TownHall."""
+        player_hall = next(
+            (b for b in self.buildings if isinstance(b, TownHall) and b.team != self.team), None
+        )
+        if not player_hall:
+            return
+        for u in self._army():
+            if u.attack_target is None and not u.path:
+                if (player_hall.pos - u.pos).length() < 300:
+                    u.order_attack(player_hall)
 
     # --- Helpers ---
 

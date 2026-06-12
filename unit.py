@@ -30,7 +30,7 @@ class Unit:
         self.attack_target = None
         self.path = list(path)
 
-    def order_attack(self, target: 'Unit') -> None:
+    def order_attack(self, target) -> None:  # accepts Unit or Building
         self.attack_target = target
         self.path = []
         self._repath_timer = 0.0
