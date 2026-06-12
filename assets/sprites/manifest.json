@@ -1,0 +1,226 @@
+{
+  "footman_team0": {
+    "frames": 60,
+    "frame_w": 61,
+    "frame_h": 58,
+    "strip_w": 3660,
+    "strip_h": 58,
+    "walk": {
+      "frames": 40,
+      "frame_w": 58,
+      "frame_h": 58,
+      "strip_w": 2320,
+      "strip_h": 58
+    }
+  },
+  "footman_team1": {
+    "frames": 60,
+    "frame_w": 61,
+    "frame_h": 58,
+    "strip_w": 3660,
+    "strip_h": 58,
+    "walk": {
+      "frames": 40,
+      "frame_w": 58,
+      "frame_h": 58,
+      "strip_w": 2320,
+      "strip_h": 58
+    }
+  },
+  "peasant_team0": {
+    "frames": 60,
+    "frame_w": 61,
+    "frame_h": 58,
+    "strip_w": 3660,
+    "strip_h": 58,
+    "walk": {
+      "frames": 40,
+      "frame_w": 58,
+      "frame_h": 58,
+      "strip_w": 2320,
+      "strip_h": 58
+    }
+  },
+  "peasant_team1": {
+    "frames": 60,
+    "frame_w": 61,
+    "frame_h": 58,
+    "strip_w": 3660,
+    "strip_h": 58,
+    "walk": {
+      "frames": 40,
+      "frame_w": 58,
+      "frame_h": 58,
+      "strip_w": 2320,
+      "strip_h": 58
+    }
+  },
+  "knight_team0": {
+    "frames": 60,
+    "frame_w": 61,
+    "frame_h": 58,
+    "strip_w": 3660,
+    "strip_h": 58,
+    "walk": {
+      "frames": 40,
+      "frame_w": 58,
+      "frame_h": 58,
+      "strip_w": 2320,
+      "strip_h": 58
+    }
+  },
+  "knight_team1": {
+    "frames": 60,
+    "frame_w": 61,
+    "frame_h": 58,
+    "strip_w": 3660,
+    "strip_h": 58,
+    "walk": {
+      "frames": 40,
+      "frame_w": 58,
+      "frame_h": 58,
+      "strip_w": 2320,
+      "strip_h": 58
+    }
+  },
+  "archer_team0": {
+    "frames": 60,
+    "frame_w": 61,
+    "frame_h": 58,
+    "strip_w": 3660,
+    "strip_h": 58,
+    "walk": {
+      "frames": 40,
+      "frame_w": 58,
+      "frame_h": 58,
+      "strip_w": 2320,
+      "strip_h": 58
+    }
+  },
+  "archer_team1": {
+    "frames": 60,
+    "frame_w": 61,
+    "frame_h": 58,
+    "strip_w": 3660,
+    "strip_h": 58,
+    "walk": {
+      "frames": 40,
+      "frame_w": 58,
+      "frame_h": 58,
+      "strip_w": 2320,
+      "strip_h": 58
+    }
+  },
+  "grunt_team0": {
+    "frames": 60,
+    "frame_w": 61,
+    "frame_h": 58,
+    "strip_w": 3660,
+    "strip_h": 58,
+    "walk": {
+      "frames": 40,
+      "frame_w": 58,
+      "frame_h": 58,
+      "strip_w": 2320,
+      "strip_h": 58
+    }
+  },
+  "grunt_team1": {
+    "frames": 60,
+    "frame_w": 61,
+    "frame_h": 58,
+    "strip_w": 3660,
+    "strip_h": 58,
+    "walk": {
+      "frames": 40,
+      "frame_w": 58,
+      "frame_h": 58,
+      "strip_w": 2320,
+      "strip_h": 58
+    }
+  },
+  "peon_team0": {
+    "frames": 60,
+    "frame_w": 61,
+    "frame_h": 58,
+    "strip_w": 3660,
+    "strip_h": 58,
+    "walk": {
+      "frames": 40,
+      "frame_w": 58,
+      "frame_h": 58,
+      "strip_w": 2320,
+      "strip_h": 58
+    }
+  },
+  "peon_team1": {
+    "frames": 60,
+    "frame_w": 61,
+    "frame_h": 58,
+    "strip_w": 3660,
+    "strip_h": 58,
+    "walk": {
+      "frames": 40,
+      "frame_w": 58,
+      "frame_h": 58,
+      "strip_w": 2320,
+      "strip_h": 58
+    }
+  },
+  "ogre_team0": {
+    "frames": 60,
+    "frame_w": 61,
+    "frame_h": 58,
+    "strip_w": 3660,
+    "strip_h": 58,
+    "walk": {
+      "frames": 40,
+      "frame_w": 58,
+      "frame_h": 58,
+      "strip_w": 2320,
+      "strip_h": 58
+    }
+  },
+  "ogre_team1": {
+    "frames": 60,
+    "frame_w": 61,
+    "frame_h": 58,
+    "strip_w": 3660,
+    "strip_h": 58,
+    "walk": {
+      "frames": 40,
+      "frame_w": 58,
+      "frame_h": 58,
+      "strip_w": 2320,
+      "strip_h": 58
+    }
+  },
+  "axethrower_team0": {
+    "frames": 60,
+    "frame_w": 61,
+    "frame_h": 58,
+    "strip_w": 3660,
+    "strip_h": 58,
+    "walk": {
+      "frames": 40,
+      "frame_w": 58,
+      "frame_h": 58,
+      "strip_w": 2320,
+      "strip_h": 58
+    }
+  },
+  "axethrower_team1": {
+    "frames": 60,
+    "frame_w": 61,
+    "frame_h": 58,
+    "strip_w": 3660,
+    "strip_h": 58,
+    "walk": {
+      "frames": 40,
+      "frame_w": 58,
+      "frame_h": 58,
+      "strip_w": 2320,
+      "strip_h": 58
+    }
+  }
+}

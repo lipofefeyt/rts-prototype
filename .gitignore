@@ -2,3 +2,6 @@
 __pycache__/
 *.pyc
 *.pyo
+
+# WC2 sprite sheets extracted from copyrighted MAINDAT.WAR — not committed
+assets/sprites/*.png
