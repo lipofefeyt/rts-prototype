@@ -11,6 +11,7 @@ from fog import FogOfWar
 from minimap import Minimap
 from sound import pre_init, load_sounds
 from sprites import load_unit_sprites
+from spritesheet import load_war2_sprites
 from pathfinding import CELL_SIZE
 
 # Logical (canvas) resolution — game coordinates always live here
@@ -195,9 +196,13 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
 
     # --- Unit sprites ---
     unit_sprites = load_unit_sprites()
+    war2_sheets  = load_war2_sprites()
 
     def _sprite(unit_type: str, team: int) -> pygame.Surface:
         return unit_sprites.get((unit_type, team), unit_sprites[('footman', team % 2)])
+
+    def _sheet(unit_type: str, team: int):
+        return war2_sheets.get((unit_type, team))
 
     # --- Map ---
     game_map = GameMap(WIDTH, HEIGHT)
@@ -221,11 +226,11 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
 
     # --- Units ---
     units: list = [
-        Unit(280, 330,  _sprite('footman', 0), team=0),
-        Unit(380, 330,  _sprite('footman', 0), team=0),
-        Worker(180, 360, _sprite('worker',  0), team=0),
-        Unit(1040, 360,  _sprite('footman', 1), team=1),
-        Worker(1200, 380, _sprite('worker',  1), team=1),
+        Unit(280, 330,  _sprite('footman', 0), team=0, sheet=_sheet('footman', 0)),
+        Unit(380, 330,  _sprite('footman', 0), team=0, sheet=_sheet('footman', 0)),
+        Worker(180, 360, _sprite('worker',  0), team=0, sheet=_sheet('worker',  0)),
+        Unit(1040, 360,  _sprite('footman', 1), team=1, sheet=_sheet('footman', 1)),
+        Worker(1200, 380, _sprite('worker',  1), team=1, sheet=_sheet('worker',  1)),
     ]
 
     corpses: list[Corpse] = []
@@ -244,6 +249,7 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
         game_map=game_map,
         enemy_sprite=_sprite('footman', 1),
         worker_sprite=_sprite('worker',  1),
+        sheets=war2_sheets,
     )
 
     while True:
@@ -404,9 +410,11 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
                         sp = pygame.Vector2(b.rect.right + 40, b.rect.centery)
                         new_unit: Unit
                         if unit_type == "archer":
-                            new_unit = Archer(sp.x, sp.y, _sprite('archer', b.team), team=b.team)
+                            new_unit = Archer(sp.x, sp.y, _sprite('archer', b.team), team=b.team,
+                                              sheet=_sheet('archer', b.team))
                         else:
-                            new_unit = Unit(sp.x, sp.y, _sprite('footman', b.team), team=b.team)
+                            new_unit = Unit(sp.x, sp.y, _sprite('footman', b.team), team=b.team,
+                                            sheet=_sheet('footman', b.team))
                         units.append(new_unit)
                         if b.team == 0:
                             _play('train_done')

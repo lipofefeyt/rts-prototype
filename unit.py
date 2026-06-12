@@ -1,5 +1,6 @@
 import pygame
 from stats import UNIT_STATS
+from spritesheet import vel_to_dir, ANIM_FPS, DIR_S
 
 AGGRO_RANGE = 220.0    # idle units auto-attack enemies this close
 REPATH_INTERVAL = 0.5  # seconds between A* recalcs while chasing
@@ -7,13 +8,20 @@ REPATH_INTERVAL = 0.5  # seconds between A* recalcs while chasing
 
 class Unit:
     def __init__(self, x: float, y: float, image: pygame.Surface,
-                 team: int = 0, unit_type: str = "footman"):
+                 team: int = 0, unit_type: str = "footman", sheet=None):
         self.pos = pygame.Vector2(x, y)
         self.path: list[pygame.Vector2] = []
         self.selected = False
         self.team = team
         self.image = image
-        self.rect = self.image.get_rect(center=(int(x), int(y)))
+        # Fixed 64×64 hit-box regardless of sprite sheet frame dimensions
+        self.rect = pygame.Rect(0, 0, 64, 64)
+        self.rect.center = (int(x), int(y))
+
+        self._sheet = sheet
+        self._anim_timer = 0.0
+        self._last_dir = DIR_S
+        self._moving = False
 
         s = UNIT_STATS[unit_type]
         self.hp = self.max_hp = s.hp
@@ -70,6 +78,7 @@ class Unit:
                     self._repath_timer = REPATH_INTERVAL
 
         # Waypoint movement
+        old_pos = pygame.Vector2(self.pos)
         while self.path:
             direction = self.path[0] - self.pos
             if direction.length() <= 4:
@@ -77,15 +86,31 @@ class Unit:
             else:
                 self.pos += direction.normalize() * self.speed * dt
                 break
-
+        self._update_anim(self.pos - old_pos, dt)
         self.rect.center = (int(self.pos.x), int(self.pos.y))
+
+    def _update_anim(self, vel: pygame.Vector2, dt: float) -> None:
+        if self._sheet is None:
+            return
+        if vel.length_squared() > 0.01:
+            self._last_dir = vel_to_dir(vel)
+            self._anim_timer += dt
+            self._moving = True
+        else:
+            self._moving = False
+            self._anim_timer = 0.0
 
     def _deal_attack(self) -> None:
         if self.attack_target:
             self.attack_target.hp -= self.attack_damage
 
     def draw(self, surface: pygame.Surface) -> None:
-        surface.blit(self.image, self.rect)
+        if self._sheet is not None:
+            tick = int(self._anim_timer * ANIM_FPS) if self._moving else 0
+            frame = self._sheet.walk_frame(self._last_dir, tick)
+            surface.blit(frame, frame.get_rect(center=self.rect.center))
+        else:
+            surface.blit(self.image, self.rect)
         if self.selected:
             pygame.draw.circle(surface, (0, 255, 0), self.rect.center, 70, 2)
         self._draw_health_bar(surface)
@@ -115,8 +140,8 @@ class Unit:
 class Archer(Unit):
     """Ranged unit: fires a homing Projectile instead of dealing instant damage."""
 
-    def __init__(self, x: float, y: float, image: pygame.Surface, team: int = 0):
-        super().__init__(x, y, image, team, unit_type="archer")
+    def __init__(self, x: float, y: float, image: pygame.Surface, team: int = 0, sheet=None):
+        super().__init__(x, y, image, team, unit_type="archer", sheet=sheet)
         self.projectiles_pending: list = []   # drained by main each frame
 
     def _deal_attack(self) -> None:
@@ -135,8 +160,8 @@ class Worker(Unit):
     HARVEST_TIME = 3.0
     PROXIMITY = 90
 
-    def __init__(self, x: float, y: float, image: pygame.Surface, team: int = 0):
-        super().__init__(x, y, image, team, unit_type="worker")
+    def __init__(self, x: float, y: float, image: pygame.Surface, team: int = 0, sheet=None):
+        super().__init__(x, y, image, team, unit_type="worker", sheet=sheet)
         self.gold_delivered = 0
         self._mine = None
         self._dropoff = None
@@ -187,6 +212,7 @@ class Worker(Unit):
                         self.attack_target.hp -= self.attack_damage
                         self._attack_timer = self.attack_cooldown
 
+        old_pos = pygame.Vector2(self.pos)
         while self.path:
             direction = self.path[0] - self.pos
             if direction.length() <= 4:
@@ -194,4 +220,5 @@ class Worker(Unit):
             else:
                 self.pos += direction.normalize() * self.speed * dt
                 break
+        self._update_anim(self.pos - old_pos, dt)
         self.rect.center = (int(self.pos.x), int(self.pos.y))

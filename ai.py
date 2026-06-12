@@ -17,7 +17,8 @@ class AIController:
     """
 
     def __init__(self, team: int, buildings: list, units: list, gold: dict,
-                 game_map, enemy_sprite: pygame.Surface, worker_sprite: pygame.Surface):
+                 game_map, enemy_sprite: pygame.Surface, worker_sprite: pygame.Surface,
+                 sheets: dict | None = None):
         self.team = team
         self.buildings = buildings   # shared reference — appends are visible in main
         self.units = units
@@ -25,6 +26,7 @@ class AIController:
         self.game_map = game_map
         self.enemy_sprite = enemy_sprite
         self.worker_sprite = worker_sprite
+        self.sheets = sheets or {}
         self.state = "gather"
         self._wave_timer = 0.0
 
@@ -61,7 +63,8 @@ class AIController:
         # Replace a lost worker if the AI can afford it
         if not workers and self.gold[self.team] >= WORKER_REPLACE_COST:
             sp = pygame.Vector2(hall.rect.right + 40, hall.rect.centery)
-            self.units.append(Worker(sp.x, sp.y, self.worker_sprite, team=self.team))
+            sheet = self.sheets.get(('worker', self.team))
+            self.units.append(Worker(sp.x, sp.y, self.worker_sprite, team=self.team, sheet=sheet))
             self.gold[self.team] -= WORKER_REPLACE_COST
 
     def _tick_training(self) -> None:
