@@ -8,8 +8,13 @@ FPS = 60
 FORMATION_SPACING = 90
 
 
+def make_sprite(color: tuple) -> pygame.Surface:
+    s = pygame.Surface((128, 128), pygame.SRCALPHA)
+    s.fill(color)
+    return s
+
+
 def formation_targets(center: pygame.Vector2, count: int) -> list[pygame.Vector2]:
-    """Arrange count positions in a centered grid around center."""
     if count == 0:
         return []
     cols = max(1, math.ceil(math.sqrt(count)))
@@ -42,16 +47,24 @@ def main():
 
     try:
         raw = pygame.image.load("assets/footman.png").convert_alpha()
-        sprite = pygame.transform.scale(raw, (128, 128))
+        player_sprite = pygame.transform.scale(raw, (128, 128))
+        enemy_sprite = player_sprite.copy()
     except FileNotFoundError:
-        sprite = pygame.Surface((128, 128), pygame.SRCALPHA)
-        sprite.fill((70, 130, 180))
+        player_sprite = make_sprite((70, 130, 180))   # steel blue
+        enemy_sprite = make_sprite((180, 50, 50))      # red
 
     game_map = GameMap(WIDTH, HEIGHT)
     game_map.add_obstacle(pygame.Rect(500, 200, 128, 256))
     game_map.add_obstacle(pygame.Rect(800, 400, 200, 64))
 
-    units = [Unit(200, 300, sprite), Unit(320, 300, sprite), Unit(440, 300, sprite)]
+    units: list[Unit] = [
+        Unit(200, 300, player_sprite, team=0),
+        Unit(320, 300, player_sprite, team=0),
+        Unit(440, 300, player_sprite, team=0),
+        Unit(1000, 200, enemy_sprite, team=1),
+        Unit(1100, 300, enemy_sprite, team=1),
+        Unit(1000, 400, enemy_sprite, team=1),
+    ]
     selected: list[Unit] = []
 
     drag_start: pygame.Vector2 | None = None
@@ -73,10 +86,19 @@ def main():
                 if event.button == 1:
                     drag_start = pygame.Vector2(event.pos)
                     drag_current = pygame.Vector2(event.pos)
+
                 elif event.button == 3 and selected:
-                    targets = formation_targets(pygame.Vector2(event.pos), len(selected))
-                    for unit, tgt in zip(selected, targets):
-                        unit.move_to(game_map.find_path(unit.pos, tgt))
+                    # Right-click on enemy → attack order; otherwise move
+                    enemy_clicked = next(
+                        (u for u in units if u.team == 1 and u.contains_point(event.pos)), None
+                    )
+                    if enemy_clicked:
+                        for unit in selected:
+                            unit.order_attack(enemy_clicked)
+                    else:
+                        targets = formation_targets(pygame.Vector2(event.pos), len(selected))
+                        for unit, tgt in zip(selected, targets):
+                            unit.move_to(game_map.find_path(unit.pos, tgt))
 
             elif event.type == pygame.MOUSEMOTION and drag_start is not None:
                 drag_current = pygame.Vector2(event.pos)
@@ -92,16 +114,26 @@ def main():
                         int(abs(delta.x)),
                         int(abs(delta.y)),
                     )
-                    selected = apply_selection(selected, [u for u in units if sel_rect.colliderect(u.rect)])
+                    new_sel = [u for u in units if u.team == 0 and sel_rect.colliderect(u.rect)]
                 else:
-                    clicked = next((u for u in units if u.contains_point(event.pos)), None)
-                    selected = apply_selection(selected, [clicked] if clicked else [])
+                    clicked = next((u for u in units if u.team == 0 and u.contains_point(event.pos)), None)
+                    new_sel = [clicked] if clicked else []
 
+                selected = apply_selection(selected, new_sel)
                 drag_start = None
                 drag_current = None
 
-        for unit in units:
-            unit.update(dt)
+        # Update — each unit sees only the opposing team as enemies
+        player_units = [u for u in units if u.team == 0]
+        enemy_units = [u for u in units if u.team == 1]
+        for u in player_units:
+            u.update(dt, enemy_units, game_map)
+        for u in enemy_units:
+            u.update(dt, player_units, game_map)
+
+        # Reap dead units
+        units = [u for u in units if u.is_alive()]
+        selected = [u for u in selected if u.is_alive()]
 
         # --- Draw ---
         screen.fill((30, 30, 30))
@@ -115,8 +147,7 @@ def main():
             if delta.length() > 4:
                 rx = int(min(drag_start.x, drag_current.x))
                 ry = int(min(drag_start.y, drag_current.y))
-                rw = int(abs(delta.x))
-                rh = int(abs(delta.y))
+                rw, rh = int(abs(delta.x)), int(abs(delta.y))
                 overlay = pygame.Surface((max(1, rw), max(1, rh)), pygame.SRCALPHA)
                 overlay.fill((0, 255, 0, 40))
                 screen.blit(overlay, (rx, ry))
