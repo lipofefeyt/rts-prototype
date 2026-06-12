@@ -106,3 +106,80 @@ class Unit:
         color = (0, 200, 0) if ratio > 0.5 else (220, 180, 0) if ratio > 0.25 else (200, 30, 30)
         pygame.draw.rect(surface, (50, 50, 50), (x, y, bar_w, bar_h))
         pygame.draw.rect(surface, color, (x, y, int(bar_w * ratio), bar_h))
+
+
+class Worker(Unit):
+    """Harvests gold from a GoldMine and returns it to a TownHall drop-off."""
+
+    CARRY_CAP = 10
+    HARVEST_TIME = 3.0   # seconds per trip at the mine
+    PROXIMITY = 90       # px to consider "arrived"
+
+    def __init__(self, x: float, y: float, image: pygame.Surface, team: int = 0):
+        super().__init__(x, y, image, team)
+        self.hp = self.max_hp = 40
+        self.attack_damage = 5
+        self.attack_range = 80.0
+        self.speed = 160.0
+
+        self.gold_delivered = 0   # read and zeroed by main each frame
+        self._mine = None
+        self._dropoff = None
+        self._carrying = 0
+        self._wstate = "idle"     # idle | to_mine | harvesting | to_hall
+        self._harvest_timer = 0.0
+
+    def order_harvest(self, mine, dropoff, game_map) -> None:
+        self._mine = mine
+        self._dropoff = dropoff
+        self._wstate = "to_mine"
+        self.attack_target = None
+        self.path = game_map.find_path(self.pos, mine.pos)
+
+    def update(self, dt: float, enemies: list, game_map) -> None:
+        # Harvest state machine
+        if self._wstate == "to_mine" and self._mine:
+            if not self.path and (self._mine.pos - self.pos).length() < self.PROXIMITY:
+                self._wstate = "harvesting"
+                self._harvest_timer = self.HARVEST_TIME
+
+        elif self._wstate == "harvesting":
+            self._harvest_timer -= dt
+            if self._harvest_timer <= 0:
+                self._carrying = self.CARRY_CAP
+                self._wstate = "to_hall"
+                if self._dropoff:
+                    self.path = game_map.find_path(self.pos, self._dropoff.pos)
+
+        elif self._wstate == "to_hall" and self._dropoff:
+            if not self.path and (self._dropoff.pos - self.pos).length() < self.PROXIMITY:
+                self.gold_delivered += self._carrying
+                self._carrying = 0
+                self._wstate = "to_mine"
+                if self._mine:
+                    self.path = game_map.find_path(self.pos, self._mine.pos)
+
+        # Combat timers (workers fight back when attacked, but don't auto-aggro)
+        self._attack_timer = max(0.0, self._attack_timer - dt)
+        self._repath_timer = max(0.0, self._repath_timer - dt)
+
+        if self.attack_target is not None:
+            if not self.attack_target.is_alive():
+                self.attack_target = None
+            else:
+                dist = (self.attack_target.pos - self.pos).length()
+                if dist <= self.attack_range:
+                    self.path = []
+                    if self._attack_timer == 0.0:
+                        self.attack_target.hp -= self.attack_damage
+                        self._attack_timer = self.attack_cooldown
+
+        # Movement (shared with Unit)
+        while self.path:
+            direction = self.path[0] - self.pos
+            if direction.length() <= 4:
+                self.path.pop(0)
+            else:
+                self.pos += direction.normalize() * self.speed * dt
+                break
+        self.rect.center = (int(self.pos.x), int(self.pos.y))
