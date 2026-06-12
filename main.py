@@ -3,6 +3,7 @@ import pygame
 from unit import Unit, Worker
 from map import GameMap
 from building import Building, TownHall, GoldMine, Barracks, Farm
+from ai import AIController
 
 WIDTH, HEIGHT = 1280, 720
 FPS = 60
@@ -51,12 +52,17 @@ def food_stats(buildings: list[Building], units: list[Unit]) -> tuple[int, int]:
 
 def draw_hud(screen: pygame.Surface, font: pygame.font.Font,
              gold: dict, buildings: list[Building], units: list[Unit],
-             selected_building: Building | None) -> None:
+             selected_building: Building | None, ai_state: str = "") -> None:
     # Top bar
     pygame.draw.rect(screen, (20, 20, 28), (0, 0, WIDTH, 28))
     food_used, food_cap = food_stats(buildings, units)
     screen.blit(font.render(f"Gold: {gold[0]}", True, (255, 215, 0)), (10, 5))
     screen.blit(font.render(f"Food: {food_used}/{food_cap}", True, (200, 230, 200)), (160, 5))
+    if ai_state:
+        label = f"Enemy: {ai_state.upper()}"
+        color = (255, 80, 80) if ai_state == "attack" else (160, 160, 180)
+        surf = font.render(label, True, color)
+        screen.blit(surf, (WIDTH - surf.get_width() - 10, 5))
 
     if selected_building is None:
         return
@@ -102,8 +108,10 @@ def main():
         enemy_sprite = player_sprite.copy()
     except FileNotFoundError:
         player_sprite = make_sprite((70, 130, 180))
-        worker_sprite = make_sprite((120, 170, 100))
         enemy_sprite = make_sprite((180, 50, 50))
+
+    worker_sprite = make_sprite((120, 170, 100))        # always defined
+    enemy_worker_sprite = make_sprite((170, 110, 110))
 
     game_map = GameMap(WIDTH, HEIGHT)
     game_map.add_obstacle(pygame.Rect(500, 200, 128, 256))
@@ -118,25 +126,36 @@ def main():
         Farm(310, 420, team=0),
         # Enemy base (right)
         TownHall(1090, 260, team=1),
+        Barracks(940, 260, team=1),
+        Farm(940, 420, team=1),
+        Farm(1090, 420, team=1),
         # Neutral gold mines
         GoldMine(40, 110),     # player-side
         GoldMine(1100, 110),   # enemy-side
     ]
 
     player_hall = next(b for b in buildings if isinstance(b, TownHall) and b.team == 0)
-    player_barracks = next(b for b in buildings if isinstance(b, Barracks) and b.team == 0)
 
     units: list[Unit] = [
         Unit(280, 330, player_sprite, team=0),
         Unit(380, 330, player_sprite, team=0),
         Worker(180, 360, worker_sprite, team=0),
-        # Enemy footmen
-        Unit(1000, 300, enemy_sprite, team=1),
-        Unit(1100, 380, enemy_sprite, team=1),
-        Unit(1040, 460, enemy_sprite, team=1),
+        # Enemy starting force
+        Unit(1040, 360, enemy_sprite, team=1),
+        Worker(1200, 380, enemy_worker_sprite, team=1),
     ]
 
     gold: dict[int, int] = {0: 500, 1: 500}
+
+    ai = AIController(
+        team=1,
+        buildings=buildings,
+        units=units,
+        gold=gold,
+        game_map=game_map,
+        enemy_sprite=enemy_sprite,
+        worker_sprite=enemy_worker_sprite,
+    )
     selected: list[Unit] = []
     selected_building: Building | None = None
 
@@ -229,6 +248,8 @@ def main():
                 drag_current = None
 
         # --- Update ---
+        ai.update(dt)
+
         player_units = [u for u in units if u.team == 0]
         enemy_units = [u for u in units if u.team == 1]
         for u in player_units:
@@ -236,7 +257,7 @@ def main():
         for u in enemy_units:
             u.update(dt, player_units, game_map)
 
-        # Collect worker gold deliveries
+        # Collect worker gold deliveries (all teams)
         for u in units:
             if isinstance(u, Worker):
                 gold[u.team] += u.gold_delivered
@@ -276,7 +297,7 @@ def main():
                 screen.blit(overlay, (rx, ry))
                 pygame.draw.rect(screen, (0, 255, 0), (rx, ry, rw, rh), 1)
 
-        draw_hud(screen, font, gold, buildings, units, selected_building)
+        draw_hud(screen, font, gold, buildings, units, selected_building, ai.state)
         pygame.display.flip()
 
 
