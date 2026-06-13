@@ -26,9 +26,10 @@ class FogOfWar:
             if dc * dc + dr * dr <= SIGHT_CELLS * SIGHT_CELLS
         ]
 
-    def update(self, friendly_units: list) -> None:
+    def update(self, observers: list) -> None:
+        """observers: any mix of friendly units + buildings that have a .pos attribute."""
         visible: set[tuple[int, int]] = set()
-        for u in friendly_units:
+        for u in observers:
             cx = int(u.pos.x / CELL_SIZE)
             cy = int(u.pos.y / CELL_SIZE)
             for dc, dr in self._offsets:

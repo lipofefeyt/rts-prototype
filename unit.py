@@ -22,6 +22,8 @@ class Unit:
         self._anim_timer = 0.0
         self._last_dir = DIR_S
         self._moving = False
+        self._dir_candidate = DIR_S  # proposed direction before hysteresis
+        self._dir_frames = 0         # consecutive frames the candidate has held
 
         s = UNIT_STATS[unit_type]
         self.hp = self.max_hp = s.hp
@@ -89,11 +91,20 @@ class Unit:
         self._update_anim(self.pos - old_pos, dt)
         self.rect.center = (int(self.pos.x), int(self.pos.y))
 
+    _DIR_HOLD = 4   # frames a new direction must be stable before we commit to it
+
     def _update_anim(self, vel: pygame.Vector2, dt: float) -> None:
         if self._sheet is None:
             return
         if vel.length_squared() > 0.01:
-            self._last_dir = vel_to_dir(vel)
+            candidate = vel_to_dir(vel)
+            if candidate == self._dir_candidate:
+                self._dir_frames += 1
+            else:
+                self._dir_candidate = candidate
+                self._dir_frames = 1
+            if self._dir_frames >= self._DIR_HOLD:
+                self._last_dir = candidate
             self._anim_timer += dt
             self._moving = True
         else:

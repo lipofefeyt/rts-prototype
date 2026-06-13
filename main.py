@@ -436,7 +436,8 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
                 selected_building.selected = False
                 selected_building = None
 
-            fog.update(player_units)
+            player_bldgs = [b for b in buildings if b.team == 0]
+            fog.update(player_units + player_bldgs)
 
             if not any(isinstance(b, TownHall) and b.team == 1 for b in buildings):
                 game_over = "victory"
