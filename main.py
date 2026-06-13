@@ -89,11 +89,13 @@ def draw_hud(canvas: pygame.Surface, font: pygame.font.Font,
     canvas.blit(font.render("WIN" if fullscreen else "F11", True, (180, 210, 240)),
                 (_FS_BTN.x + 6, _FS_BTN.y + 2))
 
-    if selected_building is None:
-        return
-
+    # Always paint the bottom panel background to prevent bleed-through from
+    # unit selection circles and the drag box near the bottom of the map.
     pygame.draw.rect(canvas, (20, 22, 32), (0, PANEL_Y, WIDTH, PANEL_H))
     pygame.draw.line(canvas, (70, 70, 100), (0, PANEL_Y), (WIDTH, PANEL_Y))
+
+    if selected_building is None:
+        return
     info = f"{selected_building.label}   HP {selected_building.hp}/{selected_building.max_hp}"
     canvas.blit(font.render(info, True, (180, 200, 220)), (10, PANEL_Y + 6))
 
@@ -472,11 +474,13 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
             if delta.length() > 4:
                 rx = int(min(drag_start.x, drag_current.x))
                 ry = int(min(drag_start.y, drag_current.y))
-                rw, rh = int(abs(delta.x)), int(abs(delta.y))
-                sel_surf = pygame.Surface((max(1, rw), max(1, rh)), pygame.SRCALPHA)
-                sel_surf.fill((0, 255, 0, 40))
-                canvas.blit(sel_surf, (rx, ry))
-                pygame.draw.rect(canvas, (0, 255, 0), (rx, ry, rw, rh), 1)
+                rw = int(abs(delta.x))
+                rh = min(int(abs(delta.y)), PANEL_Y - ry)  # clamp to game area
+                if rw > 0 and rh > 0:
+                    sel_surf = pygame.Surface((rw, rh), pygame.SRCALPHA)
+                    sel_surf.fill((0, 255, 0, 40))
+                    canvas.blit(sel_surf, (rx, ry))
+                    pygame.draw.rect(canvas, (0, 255, 0), (rx, ry, rw, rh), 1)
 
         minimap.draw(canvas, buildings, units)
         draw_hud(canvas, font, gold, buildings, units, selected_building,
