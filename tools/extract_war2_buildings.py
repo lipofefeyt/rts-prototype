@@ -25,7 +25,11 @@ LIBPUD   = os.path.join(WAR2DIR, "build", "libpud", "libpud.so")
 BLDG_DIR = os.path.join(REPO, "assets", "sprites", "buildings")
 TILE_DIR = os.path.join(REPO, "assets", "sprites", "tiles")
 
-PUD_ERA_FOREST = 0
+PUD_ERA_FOREST    = 0
+PUD_ERA_WINTER    = 1
+PUD_ERA_WASTELAND = 2
+PUD_ERA_SWAMP     = 3
+_ERA_IDS = {"forest": 0, "winter": 1, "wasteland": 2, "swamp": 3}
 
 
 class PudColor(ctypes.Structure):
@@ -189,51 +193,41 @@ def main():
         manifest[label] = info
         print(f"  ✓  completed frame saved → {done_path}  ({dw}×{dh})")
 
-    # ── Forest tileset ────────────────────────────────────────────────────────
-    print("\nExtracting Forest tileset ...", flush=True)
-    tiles: list[dict] = []
+    # ── Tilesets (all 4 eras) ─────────────────────────────────────────────────
+    import pygame as _pg
+    for era_name, era_id in _ERA_IDS.items():
+        print(f"\nExtracting {era_name} tileset ...", flush=True)
+        tiles: list[dict] = []
 
-    def on_tile(_data, pixels, w, h, _ts, tile_id):
-        n = w * h
-        buf = bytearray(4 * n)
-        for i in range(n):
-            p = pixels[i]
-            buf[4 * i]     = p.r
-            buf[4 * i + 1] = p.g
-            buf[4 * i + 2] = p.b
-            buf[4 * i + 3] = p.a
-        tiles.append({"id": int(tile_id), "w": int(w), "h": int(h), "rgba": bytes(buf)})
+        def on_tile(_data, pixels, w, h, _ts, tile_id, _t=tiles):
+            n = w * h
+            buf = bytearray(4 * n)
+            for i in range(n):
+                p = pixels[i]
+                buf[4*i]=p.r; buf[4*i+1]=p.g; buf[4*i+2]=p.b; buf[4*i+3]=p.a
+            _t.append({"id": int(tile_id), "w": int(w), "h": int(h), "rgba": bytes(buf)})
 
-    tile_cb = TilesetCB(on_tile)
-    count   = libwar2.war2_tileset_decode(w2, PUD_ERA_FOREST, tile_cb, None)
-    print(f"  {count} tiles decoded ({len(tiles)} received)")
+        tile_cb = TilesetCB(on_tile)
+        count   = libwar2.war2_tileset_decode(w2, era_id, tile_cb, None)
+        print(f"  {count} tiles decoded ({len(tiles)} received)")
 
-    if tiles:
-        import pygame
-        tile_w = tiles[0]["w"]
-        tile_h = tiles[0]["h"]
-        cols   = 32
-        rows   = (len(tiles) + cols - 1) // cols
-
-        atlas = pygame.Surface((tile_w * cols, tile_h * rows), pygame.SRCALPHA)
-        atlas.fill((0, 0, 0, 0))
-        for tile in tiles:
-            tid  = tile["id"]
-            col  = tid % cols
-            row  = tid // cols
-            surf = pygame.image.frombuffer(tile["rgba"], (tile["w"], tile["h"]), "RGBA")
-            atlas.blit(surf, (col * tile_w, row * tile_h))
-
-        atlas_path = os.path.join(TILE_DIR, "forest_atlas.png")
-        pygame.image.save(atlas, atlas_path)
-        manifest["forest_tileset"] = {
-            "tiles":  len(tiles),
-            "tile_w": tile_w,
-            "tile_h": tile_h,
-            "cols":   cols,
-            "rows":   rows,
-        }
-        print(f"  ✓  atlas → {atlas_path}  ({cols}×{rows} grid of {tile_w}×{tile_h})")
+        if tiles:
+            tile_w = tiles[0]["w"]
+            tile_h = tiles[0]["h"]
+            cols   = 32
+            rows   = (len(tiles) + cols - 1) // cols
+            atlas  = _pg.Surface((tile_w * cols, tile_h * rows), _pg.SRCALPHA)
+            atlas.fill((0, 0, 0, 0))
+            for tile in tiles:
+                tid = tile["id"]
+                surf = _pg.image.frombuffer(tile["rgba"], (tile["w"], tile["h"]), "RGBA")
+                atlas.blit(surf, ((tid % cols) * tile_w, (tid // cols) * tile_h))
+            atlas_path = os.path.join(TILE_DIR, f"{era_name}_atlas.png")
+            _pg.image.save(atlas, atlas_path)
+            manifest[f"{era_name}_tileset"] = {
+                "tiles": len(tiles), "tile_w": tile_w, "tile_h": tile_h, "cols": cols, "rows": rows,
+            }
+            print(f"  ✓  atlas → {atlas_path}  ({cols}×{rows} grid of {tile_w}×{tile_h})")
 
     libwar2.war2_close(w2)
     libwar2.war2_shutdown()

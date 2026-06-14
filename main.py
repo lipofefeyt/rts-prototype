@@ -751,6 +751,10 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
                     toggle_fullscreen()
                 elif event.key == pygame.K_m:
                     _set_mute(not muted)
+                elif event.key == pygame.K_e:
+                    from map import VALID_ERAS
+                    idx = VALID_ERAS.index(game_map._era) if game_map._era in VALID_ERAS else 0
+                    game_map.set_era(VALID_ERAS[(idx + 1) % len(VALID_ERAS)])
 
             if game_over is not None:
                 if event.type == pygame.MOUSEBUTTONDOWN:

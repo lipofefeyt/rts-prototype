@@ -2,35 +2,38 @@ import os
 import pygame
 from pathfinding import CELL_SIZE, world_to_grid, grid_to_world_center, astar
 
-TILE_COLORS = {
-    'G': (52, 88, 40),    # grass  (fallback when atlas absent)
-    'D': (108, 78, 50),   # dirt / ford crossing
-    'W': (28, 52, 92),    # water — impassable
-    'T': (24, 60, 8),     # tree  — impassable
+# Fallback colours used when the atlas PNG is absent (solid fills).
+# All three eras share the same tile IDs — only the palette differs.
+_ERA_TILE_COLORS: dict[str, dict[str, tuple]] = {
+    "forest":    {'G': (52, 88, 40),    'D': (108, 78, 50),  'W': (28, 52, 92),  'T': (24, 60, 8)},
+    "winter":    {'G': (200, 205, 220), 'D': (140, 160, 200),'W': (28, 52, 92),  'T': (160, 165, 185)},
+    "wasteland": {'G': (120, 55, 10),   'D': (75, 40, 10),   'W': (15, 30, 42),  'T': (110, 48, 4)},
+    "swamp":     {'G': (52, 88, 40),    'D': (108, 78, 50),  'W': (20, 45, 30),  'T': (24, 60, 8)},
 }
+TILE_COLORS = _ERA_TILE_COLORS["forest"]  # active era colours (reassigned by GameMap)
 TILE_BLOCKED = {'W', 'T'}
 
-# Tile IDs from the WC2 Forest era atlas (32×13 grid of 32×32 tiles).
-# Multiple variants per terrain type for natural-looking variety.
+# Tile IDs — identical across all WC2 eras (the atlas just uses different palettes).
 _TILE_VARIANTS: dict[str, list[int]] = {
     'G': [80, 81, 82, 84, 85, 86, 87, 88, 89, 90, 91, 92],
     'W': [16, 17, 18, 19, 32, 33, 34, 35],
     'D': [48, 49, 50, 52, 53, 54, 55, 56],
     'T': [96, 97, 98, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114],
 }
-_ATLAS_COLS = 32
-_ATLAS_PATH = os.path.join(os.path.dirname(__file__),
-                            "assets", "sprites", "tiles", "forest_atlas.png")
+_ATLAS_COLS  = 32
+_TILE_DIR    = os.path.join(os.path.dirname(__file__), "assets", "sprites", "tiles")
+VALID_ERAS   = ("forest", "winter", "wasteland", "swamp")
 
 
-def _load_tile_variants() -> dict[str, list[pygame.Surface]]:
-    """Extract variant tile surfaces from the WC2 forest atlas. Returns {} if atlas absent."""
-    if not os.path.exists(_ATLAS_PATH):
+def _load_tile_variants(era: str = "forest") -> dict[str, list[pygame.Surface]]:
+    """Extract variant tile surfaces from the atlas for the given era. Returns {} if absent."""
+    atlas_path = os.path.join(_TILE_DIR, f"{era}_atlas.png")
+    if not os.path.exists(atlas_path):
         return {}
     try:
-        atlas = pygame.image.load(_ATLAS_PATH).convert()
+        atlas = pygame.image.load(atlas_path).convert()
     except Exception as e:
-        print(f"map: warning: tile atlas: {e}")
+        print(f"map: warning: {era} atlas: {e}")
         return {}
     aw, ah = atlas.get_width(), atlas.get_height()
     result: dict[str, list[pygame.Surface]] = {}
@@ -44,7 +47,7 @@ def _load_tile_variants() -> dict[str, list[pygame.Surface]]:
         if surfs:
             result[char] = surfs
     if result:
-        print(f"map: tile variants loaded: { {k: len(v) for k, v in result.items()} }")
+        print(f"map: {era} tile variants: { {k: len(v) for k, v in result.items()} }")
     return result
 
 # 40 cols × 22 rows at 32 px/cell = 1280×704.
@@ -77,7 +80,8 @@ DEFAULT_MAP = [
 
 
 class GameMap:
-    def __init__(self, width: int, height: int, tile_map: list[str] = DEFAULT_MAP):
+    def __init__(self, width: int, height: int, tile_map: list[str] = DEFAULT_MAP,
+                 era: str = "forest"):
         self.grid_w = width // CELL_SIZE
         self.grid_h = height // CELL_SIZE
         self.tiles = tile_map
@@ -88,11 +92,18 @@ class GameMap:
                 if t in TILE_BLOCKED:
                     self.blocked.add((c, r))
 
-        # Pre-bake tile surface so draw() is a single blit per frame.
-        # Use WC2 atlas tiles when available; fall back to solid colours.
-        tile_variants = _load_tile_variants()
+        self._era = era
         self._surface = pygame.Surface((self.grid_w * CELL_SIZE, self.grid_h * CELL_SIZE))
-        for r, row in enumerate(tile_map):
+        self._bake_surface(era)
+
+    def _bake_surface(self, era: str) -> None:
+        """(Re)render the pre-baked tile surface for the given era atlas."""
+        global TILE_COLORS
+        self._era = era
+        TILE_COLORS = _ERA_TILE_COLORS.get(era, _ERA_TILE_COLORS["forest"])
+        tile_variants = _load_tile_variants(era)
+        self._surface.fill((0, 0, 0))
+        for r, row in enumerate(self.tiles):
             for c, t in enumerate(row):
                 x, y = c * CELL_SIZE, r * CELL_SIZE
                 variants = tile_variants.get(t)
@@ -102,6 +113,12 @@ class GameMap:
                 else:
                     color = TILE_COLORS.get(t, TILE_COLORS['G'])
                     pygame.draw.rect(self._surface, color, (x, y, CELL_SIZE, CELL_SIZE))
+
+    def set_era(self, era: str) -> None:
+        """Switch the map tileset palette to a different WC2 era. Blocked cells unchanged."""
+        if era not in VALID_ERAS:
+            return
+        self._bake_surface(era)
 
     def add_obstacle(self, rect: pygame.Rect) -> None:
         """Programmatic obstacle on top of tile data (kept for compatibility)."""
