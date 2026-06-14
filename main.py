@@ -79,47 +79,70 @@ _BUILD_TOOLTIP = {
 
 
 def _make_build_thumbs() -> "dict[str, pygame.Surface]":
-    """Create 24×24 procedural thumbnails for each buildable building type."""
+    """Create 36×36 thumbnails for build menu buttons.
+    Uses WC2 building sprites when available; falls back to procedural art."""
+    from building import _SPRITES as _bsprites
     thumbs: dict = {}
-    S = 24
+    S = 36
 
-    # Farm — green field, brown barn
-    s = pygame.Surface((S, S), pygame.SRCALPHA)
-    s.fill((34, 80, 34))
-    pygame.draw.polygon(s, (140, 60, 40), [(4, 12), (12, 2), (20, 12)])
-    pygame.draw.rect(s, (180, 80, 50), (5, 12, 14, 10))
-    pygame.draw.rect(s, (100, 40, 20), (9, 15, 6, 7))
-    thumbs["farm"] = s
+    for btype, stem in (("farm", "farm_team0"), ("barracks", "barracks_team0")):
+        spr = _bsprites.get(stem)
+        if spr:
+            thumbs[btype] = pygame.transform.smoothscale(spr, (S, S))
 
-    # Barracks — blue fortification with merlons
-    s = pygame.Surface((S, S), pygame.SRCALPHA)
-    s.fill((25, 40, 80))
-    for bx in (2, 7, 12, 17):
-        pygame.draw.rect(s, (60, 90, 150), (bx, 4, 3, 5))
-    pygame.draw.rect(s, (60, 90, 150), (2, 8, 20, 14))
-    pygame.draw.rect(s, (15, 25, 55), (8, 13, 8, 9))
-    thumbs["barracks"] = s
+    if "farm" not in thumbs:
+        s = pygame.Surface((S, S), pygame.SRCALPHA)
+        s.fill((34, 80, 34))
+        pygame.draw.polygon(s, (140, 60, 40), [(6, 17), (18, 3), (30, 17)])
+        pygame.draw.rect(s, (180, 80, 50), (7, 17, 22, 15))
+        pygame.draw.rect(s, (100, 40, 20), (14, 22, 8, 10))
+        thumbs["farm"] = s
 
-    # Lumber Mill — brown walls, X saw blades, wood-plank roof
+    if "barracks" not in thumbs:
+        s = pygame.Surface((S, S), pygame.SRCALPHA)
+        s.fill((25, 40, 80))
+        for bx in (2, 8, 14, 20, 26):
+            pygame.draw.rect(s, (60, 90, 150), (bx, 5, 4, 7))
+        pygame.draw.rect(s, (60, 90, 150), (2, 11, 32, 20))
+        pygame.draw.rect(s, (15, 25, 55), (12, 19, 12, 12))
+        thumbs["barracks"] = s
+
+    # LumberMill — procedural only (no WC2 sprite extracted yet)
     s = pygame.Surface((S, S), pygame.SRCALPHA)
     s.fill((70, 45, 20))
-    pygame.draw.polygon(s, (90, 55, 25), [(1, 8), (12, 1), (23, 8)])
-    pygame.draw.rect(s, (120, 80, 40), (2, 7, 20, 15))
-    pygame.draw.line(s, (210, 210, 210), (4, 9), (20, 20), 2)
-    pygame.draw.line(s, (210, 210, 210), (20, 9), (4, 20), 2)
+    pygame.draw.polygon(s, (90, 55, 25), [(1, 12), (18, 1), (35, 12)])
+    pygame.draw.rect(s, (120, 80, 40), (2, 11, 32, 22))
+    pygame.draw.line(s, (210, 210, 210), (5, 14), (30, 30), 3)
+    pygame.draw.line(s, (210, 210, 210), (30, 14), (5, 30), 3)
     thumbs["lumbermill"] = s
 
-    # Blacksmith — dark stone, ember glow, anvil
+    # Blacksmith — procedural only (no WC2 sprite extracted yet)
     s = pygame.Surface((S, S), pygame.SRCALPHA)
     s.fill((45, 40, 38))
-    pygame.draw.polygon(s, (60, 55, 50), [(1, 8), (12, 1), (23, 8)])
-    pygame.draw.rect(s, (80, 75, 70), (2, 7, 20, 15))
-    pygame.draw.rect(s, (160, 155, 150), (6, 14, 12, 5))
-    pygame.draw.rect(s, (160, 155, 150), (8, 12, 8, 3))
-    pygame.draw.circle(s, (220, 100, 20), (17, 17), 3)
+    pygame.draw.polygon(s, (60, 55, 50), [(1, 12), (18, 1), (35, 12)])
+    pygame.draw.rect(s, (80, 75, 70), (2, 11, 32, 22))
+    pygame.draw.rect(s, (160, 155, 150), (9, 20, 18, 8))
+    pygame.draw.rect(s, (160, 155, 150), (12, 17, 12, 5))
+    pygame.draw.circle(s, (220, 100, 20), (27, 26), 4)
     thumbs["blacksmith"] = s
 
     return thumbs
+
+
+# Unit portrait thumbnails for training buttons — populated by init_ui_thumbs().
+_unit_thumbs: dict[str, pygame.Surface] = {}
+
+
+def init_ui_thumbs(sheets: dict) -> None:
+    """Pre-bake 36×36 front-facing portraits for each trainable unit type.
+    Call once after load_war2_sprites() so draw_hud can use them without per-frame scaling."""
+    _unit_thumbs.clear()
+    S = 36
+    for (ut, team), sheet in sheets.items():
+        if team != 0:
+            continue
+        frame = sheet.walk_frame(4, 0)  # DIR_S, tick 0 = front-facing portrait
+        _unit_thumbs[ut] = pygame.transform.smoothscale(frame, (S, S))
 
 
 def _draw_build_tooltip(canvas: pygame.Surface, font: pygame.font.Font,
@@ -143,6 +166,46 @@ _BUILDING_UNLOCKS: dict[str, str] = {
     "Blacksmith":   "Unlocks: Knight  |  Research: Weapons & Armor upgrades",
     "Farm":         "Provides +4 food",
 }
+
+
+def _draw_train_btn(canvas: pygame.Surface, font: pygame.font.Font,
+                    btn: pygame.Rect, ut: str, label: str,
+                    cost_g: int, can_afford: bool, mouse_pos: tuple,
+                    locked: bool = False, lock_reason: str = "") -> None:
+    """Draw a training button with WC2-style unit portrait thumbnail."""
+    if locked:
+        bg, bd = (32, 30, 32), (60, 55, 60)
+    else:
+        bg = (40, 75, 40) if can_afford else (50, 50, 55)
+        bd = (70, 130, 70) if can_afford else (75, 75, 80)
+    pygame.draw.rect(canvas, bg, btn)
+    pygame.draw.rect(canvas, bd, btn, 1)
+
+    thumb = _unit_thumbs.get(ut)
+    if thumb:
+        t = thumb.copy()
+        t.set_alpha(60 if locked else (160 if not can_afford else 255))
+        canvas.blit(t, (btn.x + 5, btn.y + 5))
+        if locked:
+            tc = (80, 75, 85)
+            canvas.blit(font.render("[lock]", True, tc), (btn.x + 3, btn.y + 34))
+    else:
+        tc = (80, 75, 85) if locked else ((220, 220, 220) if can_afford else (130, 130, 130))
+        canvas.blit(font.render(label[:6], True, tc), (btn.x + 2, btn.y + 6))
+        canvas.blit(font.render(f"{cost_g}g", True, tc), (btn.x + 4, btn.y + 24))
+
+    if btn.collidepoint(mouse_pos):
+        if locked:
+            _draw_info_tooltip(canvas, font, btn, [
+                (label, (200, 190, 220)),
+                (lock_reason, (200, 120, 120)),
+            ])
+        else:
+            col_g = (220, 200, 80) if can_afford else (160, 100, 80)
+            _draw_info_tooltip(canvas, font, btn, [
+                (label, (220, 220, 230)),
+                (f"{cost_g} gold", col_g),
+            ])
 
 
 def _draw_info_tooltip(canvas: pygame.Surface, font: pygame.font.Font,
@@ -367,11 +430,8 @@ def draw_hud(canvas: pygame.Surface, font: pygame.font.Font,
             s = UNIT_STATS["worker"]
             q_len = len(selected_building.queue)
             can_w = gold[0] >= s.cost and food_used < food_cap and q_len < TownHall.MAX_QUEUE
-            pygame.draw.rect(canvas, (45, 80, 45) if can_w else (55, 55, 55), TRAIN_BTN)
-            pygame.draw.rect(canvas, (70, 120, 70) if can_w else (80, 80, 80), TRAIN_BTN, 1)
-            tc = (220, 220, 220) if can_w else (130, 130, 130)
-            canvas.blit(font.render("Worker", True, tc), (TRAIN_BTN.x + 2, TRAIN_BTN.y + 6))
-            canvas.blit(font.render(f"{s.cost}g", True, tc), (TRAIN_BTN.x + 4, TRAIN_BTN.y + 24))
+            _draw_train_btn(canvas, font, TRAIN_BTN, "worker", "Worker",
+                            s.cost, can_w, mouse_pos)
             slot_colors_th = {"worker": (100, 200, 100)}
             for i in range(TownHall.MAX_QUEUE):
                 sx = 4 + i * 16
@@ -390,35 +450,14 @@ def draw_hud(canvas: pygame.Surface, font: pygame.font.Font,
                                          (TRAIN_ARCHER_BTN, "archer", "Archer")]:
                     s = UNIT_STATS[ut]
                     can = gold[0] >= s.cost and food_used < food_cap and q_len < Barracks.MAX_QUEUE
-                    pygame.draw.rect(canvas, (45, 90, 45) if can else (55, 55, 55), btn)
-                    pygame.draw.rect(canvas, (80, 130, 80) if can else (80, 80, 80), btn, 1)
-                    tc = (220, 220, 220) if can else (130, 130, 130)
-                    canvas.blit(font.render(ulabel[:6], True, tc), (btn.x + 2, btn.y + 6))
-                    canvas.blit(font.render(f"{s.cost}g", True, tc), (btn.x + 2, btn.y + 24))
+                    _draw_train_btn(canvas, font, btn, ut, ulabel, s.cost, can, mouse_pos)
                 s = UNIT_STATS["knight"]
                 has_smith = any(isinstance(b, Blacksmith) and b.team == 0 and b.is_complete
                                 for b in buildings)
-                if has_smith:
-                    can_k = gold[0] >= s.cost and food_used < food_cap and q_len < Barracks.MAX_QUEUE
-                    pygame.draw.rect(canvas, (65, 55, 90) if can_k else (55, 55, 55), TRAIN_KNIGHT_BTN)
-                    pygame.draw.rect(canvas, (110, 90, 160) if can_k else (80, 80, 80), TRAIN_KNIGHT_BTN, 1)
-                    tc = (220, 220, 220) if can_k else (130, 130, 130)
-                    canvas.blit(font.render("Knight", True, tc),
-                                (TRAIN_KNIGHT_BTN.x + 2, TRAIN_KNIGHT_BTN.y + 6))
-                    canvas.blit(font.render(f"{s.cost}g", True, tc),
-                                (TRAIN_KNIGHT_BTN.x + 2, TRAIN_KNIGHT_BTN.y + 24))
-                else:
-                    pygame.draw.rect(canvas, (32, 30, 32), TRAIN_KNIGHT_BTN)
-                    pygame.draw.rect(canvas, (60, 55, 60), TRAIN_KNIGHT_BTN, 1)
-                    canvas.blit(font.render("Knight", True, (80, 75, 85)),
-                                (TRAIN_KNIGHT_BTN.x + 2, TRAIN_KNIGHT_BTN.y + 6))
-                    canvas.blit(font.render("[lock]", True, (80, 75, 85)),
-                                (TRAIN_KNIGHT_BTN.x + 2, TRAIN_KNIGHT_BTN.y + 24))
-                    if TRAIN_KNIGHT_BTN.collidepoint(mouse_pos):
-                        _draw_info_tooltip(canvas, font, TRAIN_KNIGHT_BTN, [
-                            ("Knight", (200, 190, 220)),
-                            ("Requires: Blacksmith", (200, 120, 120)),
-                        ])
+                can_k = has_smith and gold[0] >= s.cost and food_used < food_cap and q_len < Barracks.MAX_QUEUE
+                _draw_train_btn(canvas, font, TRAIN_KNIGHT_BTN, "knight", "Knight",
+                                s.cost, can_k, mouse_pos,
+                                locked=not has_smith, lock_reason="Requires: Blacksmith")
                 slot_colors = {"footman": (80, 130, 220), "archer": (60, 200, 150), "knight": (220, 180, 80)}
                 for i in range(Barracks.MAX_QUEUE):
                     sx = 4 + i * 16
@@ -620,6 +659,7 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
     load_building_sprites()
     unit_sprites = load_unit_sprites()
     war2_sheets  = load_war2_sprites()
+    init_ui_thumbs(war2_sheets)
 
     def _sprite(unit_type: str, team: int) -> pygame.Surface:
         return unit_sprites.get((unit_type, team), unit_sprites[('footman', team % 2)])
