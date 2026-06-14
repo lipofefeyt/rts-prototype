@@ -1,10 +1,9 @@
 import pygame
 from pathfinding import CELL_SIZE
-from map import TILE_COLORS
+from map import TILE_COLORS, TILE_BLOCKED
 
 MINI_W  = 200
 MINI_H  = 110   # preserves 40:22 cell ratio
-_PANEL_H = 80   # must match main.PANEL_H
 
 _BORDER = (100, 100, 120)
 _TEAM_DOT = {0: (80, 150, 255), 1: (255, 80, 80), -1: (220, 200, 50)}
@@ -30,7 +29,8 @@ class Minimap:
 
         self._buf = pygame.Surface((MINI_W, MINI_H))
 
-    def draw(self, surface: pygame.Surface, buildings: list, units: list) -> None:
+    def draw(self, surface: pygame.Surface, buildings: list, units: list,
+             dest_xy: "tuple | None" = None) -> None:
         self._buf.blit(self._terrain, (0, 0))
 
         for b in buildings:
@@ -48,6 +48,9 @@ class Minimap:
 
         pygame.draw.rect(self._buf, _BORDER, (0, 0, MINI_W, MINI_H), 1)
 
-        # Position always anchored to bottom-right of whatever canvas is passed in
-        sw, sh = surface.get_size()
-        surface.blit(self._buf, (sw - MINI_W - 8, sh - _PANEL_H - MINI_H - 8))
+        if dest_xy is not None:
+            surface.blit(self._buf, dest_xy)
+        else:
+            # Legacy: top-right corner above panel (kept for any external callers)
+            sw, sh = surface.get_size()
+            surface.blit(self._buf, (sw - MINI_W - 8, sh - 80 - MINI_H - 8))

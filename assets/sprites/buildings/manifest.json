@@ -1,0 +1,93 @@
+{
+  "townhall_team0": {
+    "frames": 2,
+    "frame_w": 119,
+    "frame_h": 104,
+    "strip_w": 238,
+    "strip_h": 104,
+    "done": {
+      "frame_w": 119,
+      "frame_h": 104,
+      "frame_id": 0
+    }
+  },
+  "townhall_team1": {
+    "frames": 2,
+    "frame_w": 119,
+    "frame_h": 116,
+    "strip_w": 238,
+    "strip_h": 116,
+    "done": {
+      "frame_w": 119,
+      "frame_h": 116,
+      "frame_id": 0
+    }
+  },
+  "barracks_team0": {
+    "frames": 2,
+    "frame_w": 96,
+    "frame_h": 95,
+    "strip_w": 192,
+    "strip_h": 95,
+    "done": {
+      "frame_w": 96,
+      "frame_h": 95,
+      "frame_id": 0
+    }
+  },
+  "barracks_team1": {
+    "frames": 2,
+    "frame_w": 95,
+    "frame_h": 96,
+    "strip_w": 190,
+    "strip_h": 96,
+    "done": {
+      "frame_w": 95,
+      "frame_h": 96,
+      "frame_id": 0
+    }
+  },
+  "farm_team0": {
+    "frames": 2,
+    "frame_w": 64,
+    "frame_h": 64,
+    "strip_w": 128,
+    "strip_h": 64,
+    "done": {
+      "frame_w": 64,
+      "frame_h": 64,
+      "frame_id": 0
+    }
+  },
+  "farm_team1": {
+    "frames": 2,
+    "frame_w": 64,
+    "frame_h": 64,
+    "strip_w": 128,
+    "strip_h": 64,
+    "done": {
+      "frame_w": 64,
+      "frame_h": 64,
+      "frame_id": 0
+    }
+  },
+  "goldmine": {
+    "frames": 2,
+    "frame_w": 96,
+    "frame_h": 89,
+    "strip_w": 192,
+    "strip_h": 89,
+    "done": {
+      "frame_w": 96,
+      "frame_h": 89,
+      "frame_id": 0
+    }
+  },
+  "forest_tileset": {
+    "tiles": 387,
+    "tile_w": 32,
+    "tile_h": 32,
+    "cols": 32,
+    "rows": 13
+  }
+}
