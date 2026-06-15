@@ -5,13 +5,35 @@ import pygame
 
 _SPRITE_DIR = os.path.join(os.path.dirname(__file__), "assets", "sprites")
 
-# WC2 walk strip layout: direction-major, 8 directions × 5 poses each = 40 frames.
-# Frame index = direction * 5 + pose  (direction 0=N … 7=NW, clockwise)
-# Frames 0-4=N, 5-9=NE, 10-14=E, 15-19=SE, 20-24=S, 25-29=SW, 30-34=W, 35-39=NW
-WALK_FRAMES_PER_DIR = 5   # 5 walk poses per direction
-NUM_STRIP_DIRS      = 8   # 8 directions stored in the strip
-NUM_DIRECTIONS      = 8
-ANIM_FPS            = 8.0
+# WC2 walk strip layout: POSE-MAJOR, 8 poses × 5 directions = 40 frames.
+# Frame index = pose * 5 + strip_dir
+#
+# Poses 0-4 = walk:   0=static, 1=right-foot active, 2=right-foot slight,
+#                     3=left-foot active, 4=left-foot slight
+# Poses 5-7 = attack: 5=sword up, 6=sword pulled back, 7=sword coming down
+#
+# Strip directions (5 stored): 0=N, 1=NE, 2=E, 3=SE, 4=S
+# SW/W/NW are not stored — they are horizontal mirrors of SE/E/NE.
+STRIP_DIRS           = 5     # visual directions stored per pose
+WALK_POSE_COUNT      = 5     # poses 0-4
+ATTACK_POSE_FIRST    = 5     # first attack pose index within the 40-frame walk strip
+ATTACK_POSE_COUNT    = 3     # poses 5, 6, 7
+
+NUM_DIRECTIONS       = 8
+ANIM_FPS             = 8.0   # kept for external callers; not used for timing internally
+
+# vel_to_dir (0-7, N clockwise) → strip_dir (0-4) + horizontal-flip flag
+# SW mirrors SE, W mirrors E, NW mirrors NE
+VEL_TO_STRIP_DIR: tuple[int, ...] = (0, 1, 2, 3, 4, 3, 2, 1)
+VEL_FLIP_H:       tuple[bool, ...] = (False, False, False, False, False, True, True, True)
+
+# _all.png frame layout: 60 frames total at 61×58 px each.
+#   Frames  0-39: walk+attack animation (8 poses × 5 strip dirs, pose-major)
+#   Frames 40-47: unused / reserved (legacy extraction artefact)
+#   Frames 48-59: death animation (12 sequential frames, non-directional)
+DEATH_FRAMES_START   = 48
+DEATH_FRAME_COUNT    = 12
+DEATH_ANIM_DURATION  = 3.0   # seconds to play through all death frames
 
 DIR_N, DIR_NE, DIR_E, DIR_SE, DIR_S, DIR_SW, DIR_W, DIR_NW = range(8)
 
@@ -39,12 +61,36 @@ class SpriteSheet:
             sheet.subsurface(pygame.Rect(i * frame_w, 0, frame_w, frame_h)).copy()
             for i in range(total)
         ]
+        self._flip_cache: dict[int, pygame.Surface] = {}
 
-    def walk_frame(self, direction: int, tick: int) -> pygame.Surface:
-        """direction 0-7 (N=0 … NW=7, clockwise), tick increments each animated frame.
-        Direction-major layout: idx = direction * 5 + (tick % 5).
+    def _get(self, idx: int, flip: bool) -> pygame.Surface:
+        f = self._frames[min(idx, len(self._frames) - 1)]
+        if not flip:
+            return f
+        if idx not in self._flip_cache:
+            self._flip_cache[idx] = pygame.transform.flip(f, True, False)
+        return self._flip_cache[idx]
+
+    def walk_frame(self, direction: int, walk_pose: int) -> pygame.Surface:
+        """direction 0-7 (vel_to_dir), walk_pose 0-4 (0=static, 1-4=walk steps)."""
+        d = direction % 8
+        idx = walk_pose * STRIP_DIRS + VEL_TO_STRIP_DIR[d]
+        return self._get(idx, VEL_FLIP_H[d])
+
+    def attack_frame(self, direction: int, tick: int = 0) -> pygame.Surface:
+        """Attack animation — cycles through poses 5, 6, 7 within the walk strip."""
+        d = direction % 8
+        pose = ATTACK_POSE_FIRST + (tick % ATTACK_POSE_COUNT)
+        idx = pose * STRIP_DIRS + VEL_TO_STRIP_DIR[d]
+        return self._get(idx, VEL_FLIP_H[d])
+
+    def death_frame(self, elapsed: float) -> pygame.Surface:
+        """Return the death animation frame for elapsed seconds since death.
+        Animates through all frames in DEATH_ANIM_DURATION then holds the last.
         """
-        idx = direction * WALK_FRAMES_PER_DIR + (tick % WALK_FRAMES_PER_DIR)
+        t = min(elapsed / DEATH_ANIM_DURATION, 1.0)
+        tick = int(t * DEATH_FRAME_COUNT)
+        idx = DEATH_FRAMES_START + min(tick, DEATH_FRAME_COUNT - 1)
         return self._frames[min(idx, len(self._frames) - 1)]
 
 
@@ -119,12 +165,19 @@ def load_war2_sprites(colours: "dict[int,tuple] | None" = None) -> dict[tuple, S
 
     sheets: dict[tuple, SpriteSheet] = {}
     for key, stem in _SHEET_NAMES.items():
-        path = os.path.join(_SPRITE_DIR, f"{stem}_walk.png")
-        if not os.path.exists(path):
+        all_path  = os.path.join(_SPRITE_DIR, f"{stem}_all.png")
+        walk_path = os.path.join(_SPRITE_DIR, f"{stem}_walk.png")
+        entry     = manifest.get(stem, {})
+        if os.path.exists(all_path):
+            path = all_path
+            fw   = entry.get("frame_w", 61)
+            fh   = entry.get("frame_h", 58)
+        elif os.path.exists(walk_path):
+            path = walk_path
+            fw   = entry.get("walk", {}).get("frame_w", 58)
+            fh   = entry.get("walk", {}).get("frame_h", 58)
+        else:
             continue
-        walk_info = manifest.get(stem, {}).get("walk", {})
-        fw = walk_info.get("frame_w", 58)
-        fh = walk_info.get("frame_h", 58)
         try:
             team = key[1]
             src_shades = _PLAYER_COLOUR_SRC.get(team, [])
@@ -132,6 +185,7 @@ def load_war2_sprites(colours: "dict[int,tuple] | None" = None) -> dict[tuple, S
             sheet = SpriteSheet(path, fw, fh)
             if src_shades and dst and dst != TEAM_COLOURS.get(team):
                 sheet._frames = [recolour_surface(f, src_shades, dst) for f in sheet._frames]
+                sheet._flip_cache.clear()
             sheets[key] = sheet
         except Exception as e:
             print(f"spritesheet: warning: could not load {path}: {e}")

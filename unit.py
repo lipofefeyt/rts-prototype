@@ -1,7 +1,7 @@
 import math
 import pygame
 from stats import UNIT_STATS
-from spritesheet import vel_to_dir, ANIM_FPS, DIR_N
+from spritesheet import vel_to_dir, DIR_S
 
 AGGRO_RANGE = 220.0    # idle units auto-attack enemies this close
 REPATH_INTERVAL = 0.5  # seconds between A* recalcs while chasing
@@ -22,8 +22,10 @@ class Unit:
 
         self._sheet = sheet
         self._anim_timer = 0.0
-        self._last_dir = DIR_N
+        self._last_dir = DIR_S
         self._moving = False
+        self._dir_candidate = DIR_S   # proposed direction before hysteresis
+        self._dir_frames = 0          # consecutive frames candidate has held
         self.unit_type = unit_type
 
         s = UNIT_STATS[unit_type]
@@ -35,6 +37,7 @@ class Unit:
         self.armor = 0              # damage reduction per hit; raised by upgrade research
         self.attack_cooldown = 1.0
         self._attack_timer = 0.0
+        self._attack_anim_timer = 0.0   # how long to hold the attack-pose frame
         self._repath_timer = 0.0
         self.attack_target = None   # Unit | Building — duck-typed
 
@@ -50,7 +53,6 @@ class Unit:
     def move_to(self, path: list[pygame.Vector2]) -> None:
         self.attack_target = None
         self.path = list(path)
-        self._anim_timer = 0.0
 
     def order_attack(self, target) -> None:
         self.attack_target = target
@@ -61,8 +63,9 @@ class Unit:
     # --- Per-frame ---
 
     def update(self, dt: float, enemies: list['Unit'], game_map) -> None:
-        self._attack_timer = max(0.0, self._attack_timer - dt)
-        self._repath_timer = max(0.0, self._repath_timer - dt)
+        self._attack_timer      = max(0.0, self._attack_timer      - dt)
+        self._attack_anim_timer = max(0.0, self._attack_anim_timer - dt)
+        self._repath_timer      = max(0.0, self._repath_timer      - dt)
 
         if self.attack_target is not None and not self.attack_target.is_alive():
             self.attack_target = None
@@ -91,33 +94,37 @@ class Unit:
                     self._repath_timer = REPATH_INTERVAL
 
         # Waypoint movement
-        move_vel = pygame.Vector2(0, 0)
+        old_pos = pygame.Vector2(self.pos)
         while self.path:
             direction = self.path[0] - self.pos
             if direction.length() <= 4:
                 self.path.pop(0)
             else:
-                move_vel = direction.normalize()
-                self.pos += move_vel * self.speed * dt
+                self.pos += direction.normalize() * self.speed * dt
                 break
 
-        # Animate facing the destination (last waypoint), not the current waypoint.
-        # This keeps direction stable: A* first-step detours no longer cause spin.
-        if self.path and move_vel.length_squared() > 0.01:
-            dest = self.path[-1] - self.pos
-            anim_vel = dest.normalize() if dest.length_squared() > 0.01 else move_vel
-        else:
-            anim_vel = pygame.Vector2(0, 0)
-
-        self._update_anim(anim_vel, dt)
+        self._update_anim(self.pos - old_pos, dt)
         self.rect.center = (int(self.pos.x), int(self.pos.y))
+
+    _DIR_HOLD = 4   # frames a new direction must be stable before committing
+
+    # Pixels of movement per animation frame advance (one pose switch per half-tile)
+    _ANIM_DIST_PER_FRAME: float = 16.0
 
     def _update_anim(self, vel: pygame.Vector2, dt: float) -> None:
         if self._sheet is None:
             return
-        if vel.length_squared() > 0.01:
-            self._last_dir = vel_to_dir(vel)
-            self._anim_timer += dt
+        dist = vel.length()
+        if dist > 0.01:
+            candidate = vel_to_dir(vel)
+            if candidate == self._dir_candidate:
+                self._dir_frames += 1
+            else:
+                self._dir_candidate = candidate
+                self._dir_frames = 1
+            if self._dir_frames >= self._DIR_HOLD:
+                self._last_dir = candidate
+            self._anim_timer += dist
             self._moving = True
         else:
             self._moving = False
@@ -125,6 +132,7 @@ class Unit:
 
     def _deal_attack(self) -> None:
         if self.attack_target:
+            self._attack_anim_timer = 0.3
             target_armor = getattr(self.attack_target, "armor", 0)
             dmg = max(1, self.attack_damage - target_armor)
             self.attack_target.hp -= dmg
@@ -143,8 +151,13 @@ class Unit:
 
         # Sprite (WC2 sheet) or procedural fallback
         if self._sheet is not None:
-            tick = int(self._anim_timer * ANIM_FPS) if self._moving else 0
-            frame = self._sheet.walk_frame(self._last_dir, tick)
+            if self._attack_anim_timer > 0 and hasattr(self._sheet, 'attack_frame'):
+                atk_tick = int((0.3 - self._attack_anim_timer) / 0.1)
+                frame = self._sheet.attack_frame(self._last_dir, atk_tick)
+            else:
+                tick = int(self._anim_timer / self._ANIM_DIST_PER_FRAME) if self._moving else 0
+                walk_pose = (1 + tick % 4) if self._moving else 0
+                frame = self._sheet.walk_frame(self._last_dir, walk_pose)
             if self._draw_scale != 1.0:
                 fw, fh = frame.get_size()
                 frame = pygame.transform.scale(
@@ -177,7 +190,7 @@ class Unit:
                 pygame.draw.line(surface, col, (ox, oy), (ox + dx * blen, oy), 2)
                 pygame.draw.line(surface, col, (ox, oy), (ox, oy + dy * blen), 2)
 
-            # Direction pointer — reaches the bracket edge
+            # Direction pointer
             if self._sheet is not None:
                 dvx, dvy = self._DIR_VEC[self._last_dir]
                 n   = math.sqrt(dvx * dvx + dvy * dvy)
@@ -191,6 +204,16 @@ class Unit:
                 pygame.draw.circle(surface,
                                    (255, 110, 0) if i == 0 else (180, 65, 0),
                                    (int(wp.x), int(wp.y)), 3)
+
+            # Debug overlay: show dir index and frame index
+            if self._sheet is not None:
+                tick = int(self._anim_timer / self._ANIM_DIST_PER_FRAME) if self._moving else 0
+                walk_pose = (1 + tick % 4) if self._moving else 0
+                from spritesheet import STRIP_DIRS, VEL_TO_STRIP_DIR
+                fidx = walk_pose * STRIP_DIRS + VEL_TO_STRIP_DIR[self._last_dir % 8]
+                dbg_font = pygame.font.SysFont("monospace", 10)
+                dbg = dbg_font.render(f"d={self._last_dir} f={fidx}", True, (255, 255, 0))
+                surface.blit(dbg, (cx - dbg.get_width() // 2, cy - vis // 2 - pad - 12))
 
         self._draw_health_bar(surface)
 
@@ -367,8 +390,9 @@ class Worker(Unit):
                     else:
                         self._wstate = "idle"
 
-        self._attack_timer = max(0.0, self._attack_timer - dt)
-        self._repath_timer = max(0.0, self._repath_timer - dt)
+        self._attack_timer      = max(0.0, self._attack_timer      - dt)
+        self._attack_anim_timer = max(0.0, self._attack_anim_timer - dt)
+        self._repath_timer      = max(0.0, self._repath_timer      - dt)
 
         if self.attack_target is not None:
             if not self.attack_target.is_alive():
@@ -381,20 +405,14 @@ class Worker(Unit):
                         self.attack_target.hp -= self.attack_damage
                         self._attack_timer = self.attack_cooldown
 
-        move_vel = pygame.Vector2(0, 0)
+        old_pos = pygame.Vector2(self.pos)
         while self.path:
             direction = self.path[0] - self.pos
             if direction.length() <= 4:
                 self.path.pop(0)
             else:
-                move_vel = direction.normalize()
-                self.pos += move_vel * self.speed * dt
+                self.pos += direction.normalize() * self.speed * dt
                 break
 
-        if self.path and move_vel.length_squared() > 0.01:
-            dest = self.path[-1] - self.pos
-            anim_vel = dest.normalize() if dest.length_squared() > 0.01 else move_vel
-        else:
-            anim_vel = pygame.Vector2(0, 0)
-        self._update_anim(anim_vel, dt)
+        self._update_anim(self.pos - old_pos, dt)
         self.rect.center = (int(self.pos.x), int(self.pos.y))
