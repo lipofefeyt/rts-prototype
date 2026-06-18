@@ -28,198 +28,198 @@
     }
   },
   "peasant_team0": {
-    "frames": 60,
-    "frame_w": 61,
-    "frame_h": 58,
-    "strip_w": 3660,
-    "strip_h": 58,
+    "frames": 65,
+    "frame_w": 40,
+    "frame_h": 41,
+    "strip_w": 2600,
+    "strip_h": 41,
     "walk": {
       "frames": 40,
-      "frame_w": 58,
-      "frame_h": 58,
-      "strip_w": 2320,
-      "strip_h": 58
+      "frame_w": 30,
+      "frame_h": 41,
+      "strip_w": 1200,
+      "strip_h": 41
     }
   },
   "peasant_team1": {
-    "frames": 60,
-    "frame_w": 61,
-    "frame_h": 58,
-    "strip_w": 3660,
-    "strip_h": 58,
+    "frames": 65,
+    "frame_w": 40,
+    "frame_h": 41,
+    "strip_w": 2600,
+    "strip_h": 41,
     "walk": {
       "frames": 40,
-      "frame_w": 58,
-      "frame_h": 58,
-      "strip_w": 2320,
-      "strip_h": 58
+      "frame_w": 30,
+      "frame_h": 41,
+      "strip_w": 1200,
+      "strip_h": 41
     }
   },
   "knight_team0": {
-    "frames": 60,
-    "frame_w": 61,
-    "frame_h": 58,
-    "strip_w": 3660,
-    "strip_h": 58,
+    "frames": 70,
+    "frame_w": 66,
+    "frame_h": 64,
+    "strip_w": 4620,
+    "strip_h": 64,
     "walk": {
       "frames": 40,
-      "frame_w": 58,
-      "frame_h": 58,
-      "strip_w": 2320,
-      "strip_h": 58
+      "frame_w": 64,
+      "frame_h": 64,
+      "strip_w": 2560,
+      "strip_h": 64
     }
   },
   "knight_team1": {
-    "frames": 60,
-    "frame_w": 61,
-    "frame_h": 58,
-    "strip_w": 3660,
-    "strip_h": 58,
+    "frames": 70,
+    "frame_w": 66,
+    "frame_h": 64,
+    "strip_w": 4620,
+    "strip_h": 64,
     "walk": {
       "frames": 40,
-      "frame_w": 58,
-      "frame_h": 58,
-      "strip_w": 2320,
-      "strip_h": 58
+      "frame_w": 64,
+      "frame_h": 64,
+      "strip_w": 2560,
+      "strip_h": 64
     }
   },
   "archer_team0": {
-    "frames": 60,
-    "frame_w": 61,
-    "frame_h": 58,
-    "strip_w": 3660,
-    "strip_h": 58,
+    "frames": 50,
+    "frame_w": 51,
+    "frame_h": 52,
+    "strip_w": 2550,
+    "strip_h": 52,
     "walk": {
       "frames": 40,
-      "frame_w": 58,
-      "frame_h": 58,
-      "strip_w": 2320,
-      "strip_h": 58
+      "frame_w": 47,
+      "frame_h": 52,
+      "strip_w": 1880,
+      "strip_h": 52
     }
   },
   "archer_team1": {
-    "frames": 60,
-    "frame_w": 61,
-    "frame_h": 58,
-    "strip_w": 3660,
-    "strip_h": 58,
+    "frames": 50,
+    "frame_w": 51,
+    "frame_h": 52,
+    "strip_w": 2550,
+    "strip_h": 52,
     "walk": {
       "frames": 40,
-      "frame_w": 58,
-      "frame_h": 58,
-      "strip_w": 2320,
-      "strip_h": 58
+      "frame_w": 47,
+      "frame_h": 52,
+      "strip_w": 1880,
+      "strip_h": 52
     }
   },
   "grunt_team0": {
     "frames": 60,
-    "frame_w": 61,
-    "frame_h": 58,
-    "strip_w": 3660,
-    "strip_h": 58,
+    "frame_w": 55,
+    "frame_h": 55,
+    "strip_w": 3300,
+    "strip_h": 55,
     "walk": {
       "frames": 40,
-      "frame_w": 58,
-      "frame_h": 58,
-      "strip_w": 2320,
-      "strip_h": 58
+      "frame_w": 55,
+      "frame_h": 51,
+      "strip_w": 2200,
+      "strip_h": 51
     }
   },
   "grunt_team1": {
     "frames": 60,
-    "frame_w": 61,
-    "frame_h": 58,
-    "strip_w": 3660,
-    "strip_h": 58,
+    "frame_w": 55,
+    "frame_h": 55,
+    "strip_w": 3300,
+    "strip_h": 55,
     "walk": {
       "frames": 40,
-      "frame_w": 58,
-      "frame_h": 58,
-      "strip_w": 2320,
-      "strip_h": 58
+      "frame_w": 55,
+      "frame_h": 51,
+      "strip_w": 2200,
+      "strip_h": 51
     }
   },
   "peon_team0": {
-    "frames": 60,
-    "frame_w": 61,
-    "frame_h": 58,
-    "strip_w": 3660,
-    "strip_h": 58,
+    "frames": 65,
+    "frame_w": 37,
+    "frame_h": 47,
+    "strip_w": 2405,
+    "strip_h": 47,
     "walk": {
       "frames": 40,
-      "frame_w": 58,
-      "frame_h": 58,
-      "strip_w": 2320,
-      "strip_h": 58
+      "frame_w": 37,
+      "frame_h": 47,
+      "strip_w": 1480,
+      "strip_h": 47
     }
   },
   "peon_team1": {
-    "frames": 60,
-    "frame_w": 61,
-    "frame_h": 58,
-    "strip_w": 3660,
-    "strip_h": 58,
+    "frames": 65,
+    "frame_w": 37,
+    "frame_h": 47,
+    "strip_w": 2405,
+    "strip_h": 47,
     "walk": {
       "frames": 40,
-      "frame_w": 58,
-      "frame_h": 58,
-      "strip_w": 2320,
-      "strip_h": 58
+      "frame_w": 37,
+      "frame_h": 47,
+      "strip_w": 1480,
+      "strip_h": 47
     }
   },
   "ogre_team0": {
-    "frames": 60,
-    "frame_w": 61,
-    "frame_h": 58,
-    "strip_w": 3660,
-    "strip_h": 58,
+    "frames": 70,
+    "frame_w": 65,
+    "frame_h": 57,
+    "strip_w": 4550,
+    "strip_h": 57,
     "walk": {
       "frames": 40,
-      "frame_w": 58,
-      "frame_h": 58,
-      "strip_w": 2320,
-      "strip_h": 58
+      "frame_w": 65,
+      "frame_h": 57,
+      "strip_w": 2600,
+      "strip_h": 57
     }
   },
   "ogre_team1": {
-    "frames": 60,
-    "frame_w": 61,
-    "frame_h": 58,
-    "strip_w": 3660,
-    "strip_h": 58,
+    "frames": 70,
+    "frame_w": 65,
+    "frame_h": 57,
+    "strip_w": 4550,
+    "strip_h": 57,
     "walk": {
       "frames": 40,
-      "frame_w": 58,
-      "frame_h": 58,
-      "strip_w": 2320,
-      "strip_h": 58
+      "frame_w": 65,
+      "frame_h": 57,
+      "strip_w": 2600,
+      "strip_h": 57
     }
   },
   "axethrower_team0": {
     "frames": 60,
-    "frame_w": 61,
+    "frame_w": 55,
     "frame_h": 58,
-    "strip_w": 3660,
+    "strip_w": 3300,
     "strip_h": 58,
     "walk": {
       "frames": 40,
-      "frame_w": 58,
+      "frame_w": 55,
       "frame_h": 58,
-      "strip_w": 2320,
+      "strip_w": 2200,
       "strip_h": 58
     }
   },
   "axethrower_team1": {
     "frames": 60,
-    "frame_w": 61,
+    "frame_w": 55,
     "frame_h": 58,
-    "strip_w": 3660,
+    "strip_w": 3300,
     "strip_h": 58,
     "walk": {
       "frames": 40,
-      "frame_w": 58,
+      "frame_w": 55,
       "frame_h": 58,
-      "strip_w": 2320,
+      "strip_w": 2200,
       "strip_h": 58
     }
   }

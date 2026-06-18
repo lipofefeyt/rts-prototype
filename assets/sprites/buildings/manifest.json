@@ -71,6 +71,54 @@
       "frame_id": 0
     }
   },
+  "lumbermill_team0": {
+    "frames": 2,
+    "frame_w": 95,
+    "frame_h": 85,
+    "strip_w": 190,
+    "strip_h": 85,
+    "done": {
+      "frame_w": 95,
+      "frame_h": 85,
+      "frame_id": 0
+    }
+  },
+  "lumbermill_team1": {
+    "frames": 2,
+    "frame_w": 95,
+    "frame_h": 85,
+    "strip_w": 190,
+    "strip_h": 85,
+    "done": {
+      "frame_w": 95,
+      "frame_h": 85,
+      "frame_id": 0
+    }
+  },
+  "blacksmith_team0": {
+    "frames": 2,
+    "frame_w": 96,
+    "frame_h": 96,
+    "strip_w": 192,
+    "strip_h": 96,
+    "done": {
+      "frame_w": 96,
+      "frame_h": 96,
+      "frame_id": 0
+    }
+  },
+  "blacksmith_team1": {
+    "frames": 2,
+    "frame_w": 96,
+    "frame_h": 92,
+    "strip_w": 192,
+    "strip_h": 92,
+    "done": {
+      "frame_w": 96,
+      "frame_h": 92,
+      "frame_id": 0
+    }
+  },
   "goldmine": {
     "frames": 2,
     "frame_w": 96,
@@ -89,5 +137,26 @@
     "tile_h": 32,
     "cols": 32,
     "rows": 13
+  },
+  "winter_tileset": {
+    "tiles": 393,
+    "tile_w": 32,
+    "tile_h": 32,
+    "cols": 32,
+    "rows": 13
+  },
+  "wasteland_tileset": {
+    "tiles": 393,
+    "tile_w": 32,
+    "tile_h": 32,
+    "cols": 32,
+    "rows": 13
+  },
+  "swamp_tileset": {
+    "tiles": 383,
+    "tile_w": 32,
+    "tile_h": 32,
+    "cols": 32,
+    "rows": 12
   }
 }
