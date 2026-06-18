@@ -59,9 +59,10 @@ _QUEUE_SB_Y  = _CMD_SB_Y0 + 2 * _CMD_SB_DY + 6   # = 358  (queue dots below comm
 _IDLE_W_BTN = pygame.Rect(172, 0, 44, 20)
 
 RESTART_BTN  = pygame.Rect(WIDTH // 2 - 80, HEIGHT // 2 + 50, 160, 40)
-_MUTE_BTN    = pygame.Rect(4,   HEIGHT - 28, 60, 20)
-_FS_BTN      = pygame.Rect(68,  HEIGHT - 28, 60, 20)
-_DIFF_BTN    = pygame.Rect(132, HEIGHT - 28, 82, 20)
+_MUTE_BTN    = pygame.Rect(4,   HEIGHT - 48, 60, 20)
+_FS_BTN      = pygame.Rect(68,  HEIGHT - 48, 60, 20)
+_DIFF_BTN    = pygame.Rect(132, HEIGHT - 48, 82, 20)
+_TECH_BTN    = pygame.Rect(4,   HEIGHT - 24, 214, 20)
 _DIFF_LEVELS = ("easy", "normal", "hard")
 _DIFF_COLORS = {"easy": (40,120,40), "normal": (40,70,120), "hard": (120,40,40)}
 
@@ -74,6 +75,35 @@ BUILD_COSTS = {
 }
 
 _build_thumbs: "dict | None" = None
+_thumbnails_sheet: "pygame.Surface | None" = None
+
+# WC2 icon IDs from pud.h (position = icon_id in the 10-col sheet)
+_ICON = {
+    # units
+    "worker": 0, "footman": 2, "archer": 4, "knight": 8,
+    # buildings
+    "TownHall": 40, "Farm": 38, "Barracks": 42, "LumberMill": 44, "Blacksmith": 46,
+    # actions
+    "cancel": 91, "collect": 86, "repair": 85, "move": 83, "return": 89,
+    # upgrades
+    "weapons_1": 116, "weapons_2": 117,
+    "armor_1":   164, "armor_2":   165,
+    "ranger":    132,
+}
+
+
+def _get_icon(icon_id: int, size: "tuple[int,int]" = (36, 36)) -> "pygame.Surface | None":
+    """Return a scaled Surface for the given WC2 icon ID, or None if sheet not loaded."""
+    if _thumbnails_sheet is None:
+        return None
+    col, row = icon_id % 10, icon_id // 10
+    try:
+        raw = _thumbnails_sheet.subsurface(pygame.Rect(col * 50 + 2, row * 39, 46, 38))
+        if size == (46, 38):
+            return raw.copy()
+        return pygame.transform.smoothscale(raw, size)
+    except (ValueError, pygame.error):
+        return None
 
 _BUILD_TOOLTIP = {
     "farm":       ("Farm",         "250g  100w",  "+4 food"),
@@ -84,54 +114,22 @@ _BUILD_TOOLTIP = {
 
 
 def _make_build_thumbs() -> "dict[str, pygame.Surface]":
-    """Create 36×36 thumbnails for build menu buttons.
-    Uses WC2 building sprites when available; falls back to procedural art."""
-    from building import _SPRITES as _bsprites
+    """Create 46×38 thumbnails for build menu buttons using WC2 icons."""
     thumbs: dict = {}
-    S = 36
-
-    for btype, stem in (("farm", "farm_team0"), ("barracks", "barracks_team0"),
-                        ("lumbermill", "lumbermill_team0"), ("blacksmith", "blacksmith_team0")):
-        spr = _bsprites.get(stem)
-        if spr:
-            thumbs[btype] = pygame.transform.smoothscale(spr, (S, S))
-
-    if "farm" not in thumbs:
-        s = pygame.Surface((S, S), pygame.SRCALPHA)
-        s.fill((34, 80, 34))
-        pygame.draw.polygon(s, (140, 60, 40), [(6, 17), (18, 3), (30, 17)])
-        pygame.draw.rect(s, (180, 80, 50), (7, 17, 22, 15))
-        pygame.draw.rect(s, (100, 40, 20), (14, 22, 8, 10))
-        thumbs["farm"] = s
-
-    if "barracks" not in thumbs:
-        s = pygame.Surface((S, S), pygame.SRCALPHA)
-        s.fill((25, 40, 80))
-        for bx in (2, 8, 14, 20, 26):
-            pygame.draw.rect(s, (60, 90, 150), (bx, 5, 4, 7))
-        pygame.draw.rect(s, (60, 90, 150), (2, 11, 32, 20))
-        pygame.draw.rect(s, (15, 25, 55), (12, 19, 12, 12))
-        thumbs["barracks"] = s
-
-    if "lumbermill" not in thumbs:
-        s = pygame.Surface((S, S), pygame.SRCALPHA)
-        s.fill((70, 45, 20))
-        pygame.draw.polygon(s, (90, 55, 25), [(1, 12), (18, 1), (35, 12)])
-        pygame.draw.rect(s, (120, 80, 40), (2, 11, 32, 22))
-        pygame.draw.line(s, (210, 210, 210), (5, 14), (30, 30), 3)
-        pygame.draw.line(s, (210, 210, 210), (30, 14), (5, 30), 3)
-        thumbs["lumbermill"] = s
-
-    if "blacksmith" not in thumbs:
-        s = pygame.Surface((S, S), pygame.SRCALPHA)
-        s.fill((45, 40, 38))
-        pygame.draw.polygon(s, (60, 55, 50), [(1, 12), (18, 1), (35, 12)])
-        pygame.draw.rect(s, (80, 75, 70), (2, 11, 32, 22))
-        pygame.draw.rect(s, (160, 155, 150), (9, 20, 18, 8))
-        pygame.draw.rect(s, (160, 155, 150), (12, 17, 12, 5))
-        pygame.draw.circle(s, (220, 100, 20), (27, 26), 4)
-        thumbs["blacksmith"] = s
-
+    # Primary: WC2 thumbnail sheet icons (exact pixel art from the game)
+    for btype, icon_id in (("farm", 38), ("barracks", 42), ("lumbermill", 44), ("blacksmith", 46)):
+        icon = _get_icon(icon_id, (46, 38))
+        if icon:
+            thumbs[btype] = icon
+    # Fallback: scale building sprite sheet thumbnails
+    if len(thumbs) < 4:
+        from building import _SPRITES as _bsprites
+        for btype, stem in (("farm", "farm_team0"), ("barracks", "barracks_team0"),
+                            ("lumbermill", "lumbermill_team0"), ("blacksmith", "blacksmith_team0")):
+            if btype not in thumbs:
+                spr = _bsprites.get(stem)
+                if spr:
+                    thumbs[btype] = pygame.transform.smoothscale(spr, (46, 38))
     return thumbs
 
 
@@ -157,15 +155,19 @@ _unit_thumbs: dict[str, pygame.Surface] = {}
 
 
 def init_ui_thumbs(sheets: dict) -> None:
-    """Pre-bake 36×36 front-facing portraits for each trainable unit type.
-    Call once after load_war2_sprites() so draw_hud can use them without per-frame scaling."""
+    """Pre-bake unit portrait icons for training buttons.
+    Uses WC2 thumbnail sheet icons first; falls back to front-facing walk frame."""
     _unit_thumbs.clear()
-    S = 36
+    for ut, icon_id in (("worker", 0), ("footman", 2), ("archer", 4), ("knight", 8)):
+        icon = _get_icon(icon_id, (46, 38))
+        if icon:
+            _unit_thumbs[ut] = icon
+    # Fallback for any unit not covered above
     for (ut, team), sheet in sheets.items():
-        if team != 0:
+        if team != 0 or ut in _unit_thumbs:
             continue
-        frame = sheet.walk_frame(4, 0)  # DIR_S, tick 0 = front-facing portrait
-        _unit_thumbs[ut] = pygame.transform.smoothscale(frame, (S, S))
+        frame = sheet.walk_frame(4, 0)
+        _unit_thumbs[ut] = pygame.transform.smoothscale(frame, (46, 38))
 
 
 def _draw_build_tooltip(canvas: pygame.Surface, font: pygame.font.Font,
@@ -208,10 +210,11 @@ def _draw_train_btn(canvas: pygame.Surface, font: pygame.font.Font,
     if thumb:
         t = thumb.copy()
         t.set_alpha(60 if locked else (160 if not can_afford else 255))
-        canvas.blit(t, (btn.x + 5, btn.y + 5))
+        # Icons are 46×38; buttons are 46×46 — blit flush left, 4px from top
+        canvas.blit(t, (btn.x, btn.y + 4))
         if locked:
             tc = (80, 75, 85)
-            canvas.blit(font.render("[lock]", True, tc), (btn.x + 3, btn.y + 34))
+            canvas.blit(font.render("LOCK", True, tc), (btn.x + 2, btn.y + 38))
     else:
         tc = (80, 75, 85) if locked else ((220, 220, 220) if can_afford else (130, 130, 130))
         canvas.blit(font.render(label[:6], True, tc), (btn.x + 2, btn.y + 6))
@@ -367,6 +370,160 @@ def _draw_unit_info_panel(canvas: pygame.Surface, font: pygame.font.Font,
                         (_MINI_SB_X, _SB_INFO_Y0 + 52 + row * 16))
 
 
+def draw_tech_tree(canvas: pygame.Surface, font: pygame.font.Font, big_font: pygame.font.Font,
+                   buildings: list, team_upgrades: set) -> None:
+    """Draw the full-screen tech tree overlay (activated by T key)."""
+    # Semi-transparent backdrop
+    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 175))
+    canvas.blit(overlay, (0, 0))
+
+    PW, PH = 740, 420
+    PX = (WIDTH - PW) // 2
+    PY = (HEIGHT - PH) // 2
+    panel = pygame.Surface((PW, PH))
+    panel.fill((14, 16, 28))
+    pygame.draw.rect(panel, (70, 80, 130), panel.get_rect(), 2)
+
+    # Title bar
+    pygame.draw.rect(panel, (22, 26, 48), (0, 0, PW, 32))
+    t = big_font.render("TECH TREE", True, (190, 210, 255))
+    panel.blit(t, (PW // 2 - t.get_width() // 2, 4))
+    hint = font.render("[T] or [ESC] close", True, (90, 100, 130))
+    panel.blit(hint, (PW - hint.get_width() - 8, 10))
+
+    # Helper: is building built by team 0 and complete?
+    def built(label: str) -> bool:
+        return any(b.label == label and b.team == 0 and b.is_complete for b in buildings)
+
+    # Helper: draw a single tech node (icon + name + status ring)
+    NW, NH = 62, 58
+    def draw_node(nx: int, ny: int, icon_id: int, label: str,
+                  locked: bool = False, done: bool = False,
+                  active: bool = False) -> None:
+        if done:
+            bg, bd = (22, 46, 22), (55, 120, 55)
+        elif locked:
+            bg, bd = (22, 20, 30), (50, 48, 68)
+        elif active:
+            bg, bd = (42, 55, 22), (100, 140, 55)
+        else:
+            bg, bd = (25, 28, 48), (65, 72, 115)
+        pygame.draw.rect(panel, bg, (nx, ny, NW, NH))
+        pygame.draw.rect(panel, bd, (nx, ny, NW, NH), 1)
+        icon = _get_icon(icon_id, (46, 38))
+        if icon:
+            if locked:
+                icon.set_alpha(80)
+            panel.blit(icon, (nx + (NW - 46) // 2, ny + 2))
+        lbl = font.render(label, True, (90, 95, 130) if locked else (185, 195, 225))
+        panel.blit(lbl, (nx + NW // 2 - lbl.get_width() // 2, ny + 42))
+
+    # Helper: horizontal connector line
+    def hline(x0: int, y0: int, x1: int) -> None:
+        pygame.draw.line(panel, (65, 75, 110), (x0, y0), (x1, y0), 1)
+
+    def vline(x0: int, y0: int, y1: int) -> None:
+        pygame.draw.line(panel, (65, 75, 110), (x0, y0), (x0, y1), 1)
+
+    # --- Row 0: TownHall → Farm ---
+    R0Y = 44
+    TH_X, TH_Y   = 28,  R0Y
+    FARM_X        = 148
+
+    hline(TH_X + NW, TH_Y + NH // 2, FARM_X)
+    draw_node(TH_X, TH_Y, 40, "TownHall", done=built("Town Hall"), active=True)
+    draw_node(FARM_X, TH_Y, 38, "Farm",
+              done=built("Farm"), locked=not built("Town Hall"))
+
+    # --- Row 1: Barracks → LumberMill → Blacksmith ---
+    R1Y = R0Y + NH + 36
+    BARR_X  = 28
+    LMILL_X = 200
+    SMITH_X = 380
+
+    vline(TH_X + NW // 2, TH_Y + NH, R1Y)
+    hline(TH_X + NW // 2, R1Y, BARR_X + NW // 2)
+    hline(BARR_X + NW, R1Y + NH // 2, LMILL_X)
+    hline(LMILL_X + NW, R1Y + NH // 2, SMITH_X)
+
+    barr_built = built("Barracks")
+    lmill_built = built("Lumber Mill")
+    smith_built = built("Blacksmith")
+    draw_node(BARR_X,  R1Y, 42, "Barracks",   done=barr_built,  locked=not built("Town Hall"))
+    draw_node(LMILL_X, R1Y, 44, "LumberMill", done=lmill_built, locked=not barr_built)
+    draw_node(SMITH_X, R1Y, 46, "Blacksmith", done=smith_built, locked=not lmill_built)
+
+    # Upgrade mini-icons beside Blacksmith (right column)
+    UX = SMITH_X + NW + 12
+    for ui, (rid, icon_id, row_off) in enumerate((
+        ("weapons_1", 116, 0), ("weapons_2", 117, 0),
+        ("armor_1",   164, 1), ("armor_2",   165, 1),
+    )):
+        col_off = ui % 2
+        ux = UX + col_off * 48
+        uy = R1Y + row_off * 38
+        done_upg = rid in team_upgrades
+        locked_upg = not smith_built
+        bg = (22, 46, 22) if done_upg else ((22, 20, 30) if locked_upg else (25, 28, 48))
+        bd = (55, 120, 55) if done_upg else ((50, 48, 68) if locked_upg else (65, 72, 115))
+        pygame.draw.rect(panel, bg, (ux, uy, 44, 34))
+        pygame.draw.rect(panel, bd, (ux, uy, 44, 34), 1)
+        ico = _get_icon(icon_id, (44, 30))
+        if ico:
+            if locked_upg:
+                ico.set_alpha(70)
+            panel.blit(ico, (ux, uy + 2))
+
+    # Ranger upgrade beside LumberMill
+    RNG_X = LMILL_X + NW + 8
+    RNG_Y = R1Y + NH // 2 - 17
+    rng_done = "ranger" in team_upgrades
+    rng_locked = not lmill_built
+    pygame.draw.rect(panel, (22, 46, 22) if rng_done else ((22,20,30) if rng_locked else (25,28,48)),
+                     (RNG_X, RNG_Y, 44, 34))
+    pygame.draw.rect(panel, (55,120,55) if rng_done else ((50,48,68) if rng_locked else (65,72,115)),
+                     (RNG_X, RNG_Y, 44, 34), 1)
+    rng_ico = _get_icon(132, (44, 30))
+    if rng_ico:
+        if rng_locked:
+            rng_ico.set_alpha(70)
+        panel.blit(rng_ico, (RNG_X, RNG_Y + 2))
+
+    # --- Row 2: units trained at Barracks ---
+    R2Y = R1Y + NH + 36
+    FOOT_X  = 28
+    ARCH_X  = 148
+    KNIG_X  = 268
+
+    vline(BARR_X + NW // 2, R1Y + NH, R2Y)
+    hline(BARR_X + NW // 2, R2Y, KNIG_X + NW // 2)
+
+    draw_node(FOOT_X, R2Y, 2, "Footman", done=False, locked=not barr_built)
+    draw_node(ARCH_X, R2Y, 4, "Archer",  done=False, locked=not barr_built)
+    draw_node(KNIG_X, R2Y, 8, "Knight",  done=False, locked=not smith_built)
+
+    # Blacksmith required note for Knight
+    if not smith_built:
+        req = font.render("needs Smith", True, (130, 80, 80))
+        panel.blit(req, (KNIG_X + NW // 2 - req.get_width() // 2, R2Y + NH + 2))
+
+    # --- Legend (bottom strip) ---
+    LEG_Y = PH - 22
+    pygame.draw.line(panel, (45, 50, 80), (12, LEG_Y - 4), (PW - 12, LEG_Y - 4), 1)
+    for col, (lbl, bg, bd) in enumerate((
+        ("Built",     (22, 46, 22),  (55, 120, 55)),
+        ("Available", (25, 28, 48),  (65, 72, 115)),
+        ("Locked",    (22, 20, 30),  (50, 48, 68)),
+    )):
+        lx = 28 + col * 220
+        pygame.draw.rect(panel, bg, (lx, LEG_Y, 12, 12))
+        pygame.draw.rect(panel, bd, (lx, LEG_Y, 12, 12), 1)
+        panel.blit(font.render(lbl, True, (140, 145, 175)), (lx + 16, LEG_Y))
+
+    canvas.blit(panel, (PX, PY))
+
+
 def draw_hud(canvas: pygame.Surface, font: pygame.font.Font,
              gold: dict, lumber: dict, buildings: list, units: list,
              selected: list, selected_building, ai_state: str = "",
@@ -448,8 +605,7 @@ def draw_hud(canvas: pygame.Surface, font: pygame.font.Font,
             pygame.draw.rect(canvas, border, btn, 1)
             thumb = _build_thumbs.get(btype)
             if thumb:
-                big = pygame.transform.scale(thumb, (36, 36))
-                canvas.blit(big, (btn.x + 5, btn.y + 5))
+                canvas.blit(thumb, (btn.x, btn.y + 4))
             else:
                 canvas.blit(font.render(blabel[:6], True, tc), (btn.x + 2, btn.y + 14))
             if btn.collidepoint(mouse_pos):
@@ -464,11 +620,12 @@ def draw_hud(canvas: pygame.Surface, font: pygame.font.Font,
             bd = (60, 130, 60)
             pygame.draw.rect(canvas, bg, GATHER_BTN)
             pygame.draw.rect(canvas, bd, GATHER_BTN, 1)
-            thumb = _unit_thumbs.get("worker")
-            if thumb:
-                canvas.blit(thumb, (GATHER_BTN.x + 5, GATHER_BTN.y + 5))
-            canvas.blit(font.render("Gath", True, (140, 220, 140)),
-                        (GATHER_BTN.x + 2, GATHER_BTN.y + 32))
+            gather_icon = _get_icon(_ICON["collect"], (46, 38))
+            if gather_icon:
+                canvas.blit(gather_icon, (GATHER_BTN.x, GATHER_BTN.y + 4))
+            else:
+                canvas.blit(font.render("Gath", True, (140, 220, 140)),
+                            (GATHER_BTN.x + 2, GATHER_BTN.y + 14))
             if GATHER_BTN.collidepoint(mouse_pos):
                 _draw_info_tooltip(canvas, font, GATHER_BTN, [
                     ("Gather", (200, 240, 200)),
@@ -597,8 +754,13 @@ def draw_hud(canvas: pygame.Surface, font: pygame.font.Font,
                         progress_w = int(btn.width * ratio)
                         pygame.draw.rect(canvas, (80, 120, 40), (btn.x, btn.y, progress_w, btn.height))
                         pygame.draw.rect(canvas, bd, btn, 1)
-                    canvas.blit(font.render(abbr, True, tc), (btn.x + 2, btn.y + 6))
-                    canvas.blit(font.render(sub,  True, tc), (btn.x + 2, btn.y + 24))
+                    # Upgrade icon from WC2 thumbnail sheet
+                    upg_icon = _get_icon(_ICON.get(rid, 0), (46, 28))
+                    if upg_icon:
+                        alpha = 60 if not prereq_met else (180 if done else 255)
+                        upg_icon.set_alpha(alpha)
+                        canvas.blit(upg_icon, (btn.x, btn.y + 2))
+                    canvas.blit(font.render(sub, True, tc), (btn.x + 2, btn.y + 32))
                     if btn.collidepoint(mouse_pos) and not done:
                         req_line = f"Req: {UPGRADES[spec.requires].name}" if spec.requires else "No prereqs"
                         _draw_info_tooltip(canvas, font, btn, [
@@ -634,8 +796,11 @@ def draw_hud(canvas: pygame.Surface, font: pygame.font.Font,
                     pygame.draw.rect(canvas, (40, 100, 100),
                                      (TRAIN_BTN.x, TRAIN_BTN.y, int(TRAIN_BTN.width * ratio), TRAIN_BTN.height))
                     pygame.draw.rect(canvas, bd, TRAIN_BTN, 1)
-                canvas.blit(font.render("Ranger", True, tc), (TRAIN_BTN.x + 2, TRAIN_BTN.y + 6))
-                canvas.blit(font.render(sub, True, tc), (TRAIN_BTN.x + 2, TRAIN_BTN.y + 24))
+                ranger_icon = _get_icon(_ICON["ranger"], (46, 28))
+                if ranger_icon:
+                    ranger_icon.set_alpha(60 if done else 255)
+                    canvas.blit(ranger_icon, (TRAIN_BTN.x, TRAIN_BTN.y + 2))
+                canvas.blit(font.render(sub, True, tc), (TRAIN_BTN.x + 2, TRAIN_BTN.y + 32))
                 if TRAIN_BTN.collidepoint(mouse_pos) and not done:
                     _draw_info_tooltip(canvas, font, TRAIN_BTN, [
                         (spec.name, (160, 230, 230)),
@@ -662,11 +827,18 @@ def draw_hud(canvas: pygame.Surface, font: pygame.font.Font,
     canvas.blit(font.render(difficulty.upper(), True, (220, 220, 220)),
                 (_DIFF_BTN.x + 4, _DIFF_BTN.y + 2))
 
+    # ---- Tech tree button (full-width at sidebar bottom) ----
+    pygame.draw.rect(canvas, (28, 32, 56), _TECH_BTN)
+    pygame.draw.rect(canvas, (65, 72, 115), _TECH_BTN, 1)
+    tt_lbl = font.render("[T]  Tech Tree", True, (150, 165, 220))
+    canvas.blit(tt_lbl, (_TECH_BTN.x + _TECH_BTN.width // 2 - tt_lbl.get_width() // 2,
+                         _TECH_BTN.y + 2))
+
     # ---- AI state badge ----
     if ai_state:
         label = f"Enemy: {ai_state.upper()}"
         color = (255, 80, 80) if ai_state == "attack" else (160, 160, 180)
-        canvas.blit(font.render(label, True, color), (_MINI_SB_X, HEIGHT - 52))
+        canvas.blit(font.render(label, True, color), (_MINI_SB_X, HEIGHT - 72))
 
 
 def draw_game_over(canvas: pygame.Surface, font: pygame.font.Font,
@@ -754,6 +926,12 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
     load_building_sprites()
     unit_sprites = load_unit_sprites()
     war2_sheets  = load_war2_sprites()
+    global _thumbnails_sheet
+    try:
+        _thumbnails_sheet = pygame.image.load(
+            "assets/sprites/thumbnails/thumbnails.png").convert_alpha()
+    except (FileNotFoundError, pygame.error):
+        _thumbnails_sheet = None
     init_ui_thumbs(war2_sheets)
 
     def _sprite(unit_type: str, team: int) -> pygame.Surface:
@@ -901,6 +1079,7 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
     game_over: str | None = None
     elapsed: float = 0.0
     build_mode: str | None = None   # "farm" | "barracks" | None
+    tech_tree_open: bool = False
     build_ghost: tuple[int, int] = (0, 0)
 
     ai = AIController(
@@ -921,7 +1100,9 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
                 return False, difficulty, None
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
-                    if build_mode:
+                    if tech_tree_open:
+                        tech_tree_open = False
+                    elif build_mode:
                         build_mode = None
                     elif fullscreen:
                         toggle_fullscreen()
@@ -931,6 +1112,8 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
                     toggle_fullscreen()
                 elif event.key == pygame.K_m:
                     _set_mute(not muted)
+                elif event.key == pygame.K_t:
+                    tech_tree_open = not tech_tree_open
                 elif event.key == pygame.K_e:
                     from map import VALID_ERAS
                     idx = VALID_ERAS.index(game_map._era) if game_map._era in VALID_ERAS else 0
@@ -966,6 +1149,8 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
                             if selected_building:
                                 selected_building.selected = False
                                 selected_building = None
+                    elif _TECH_BTN.collidepoint(gp):
+                        tech_tree_open = not tech_tree_open
                     elif _MUTE_BTN.collidepoint(gp):
                         _set_mute(not muted)
                     elif _FS_BTN.collidepoint(gp):
@@ -1461,6 +1646,9 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
         _mm_bldgs = [b for b in buildings if not isinstance(b, Tree)]
         minimap.draw(canvas, _mm_bldgs, units, dest_xy=(_MINI_SB_X, _MINI_SB_Y),
                      cam=(cam_ix, cam_iy), viewport=(WIDTH - SIDEBAR_W, HEIGHT))
+
+        if tech_tree_open:
+            draw_tech_tree(canvas, font, big_font, buildings, upgrades[0])
 
         if game_over is not None:
             draw_game_over(canvas, font, big_font, game_over, elapsed)
