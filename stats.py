@@ -9,13 +9,14 @@ class UnitStats:
     speed: float
     cost: int
     train_time: float
+    requires: tuple[str, ...] = field(default_factory=tuple)  # building labels that must exist
 
 
 UNIT_STATS: dict[str, UnitStats] = {
-    "footman": UnitStats(hp=60,  attack_damage=10, attack_range=100.0, speed=150.0, cost=135, train_time=8.0),
-    "archer":  UnitStats(hp=40,  attack_damage=15, attack_range=256.0, speed=130.0, cost=150, train_time=10.0),
-    "worker":  UnitStats(hp=40,  attack_damage=5,  attack_range=80.0,  speed=160.0, cost=75,  train_time=6.0),
-    "knight":  UnitStats(hp=150, attack_damage=20, attack_range=96.0,  speed=130.0, cost=800, train_time=25.0),
+    "footman": UnitStats(hp=60,  attack_damage=10, attack_range=100.0, speed=85.0,  cost=135, train_time=8.0),
+    "archer":  UnitStats(hp=40,  attack_damage=15, attack_range=256.0, speed=75.0,  cost=150, train_time=10.0),
+    "worker":  UnitStats(hp=40,  attack_damage=5,  attack_range=80.0,  speed=90.0,  cost=75,  train_time=6.0),
+    "knight":  UnitStats(hp=150, attack_damage=20, attack_range=96.0,  speed=80.0,  cost=800, train_time=25.0, requires=("Blacksmith",)),
 }
 
 

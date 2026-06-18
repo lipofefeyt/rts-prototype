@@ -1,7 +1,7 @@
 import math
 import pygame
 from unit import Unit, Worker, Archer
-from map import GameMap, DEFAULT_MAP
+from map import GameMap, DEFAULT_MAP, generate_map, find_base_area
 from building import Building, TownHall, GoldMine, Barracks, Farm, Tree, Blacksmith, LumberMill, load_building_sprites
 from ai import AIController, DIFFICULTY as AI_DIFFICULTY
 from stats import UNIT_STATS, UPGRADES
@@ -17,6 +17,7 @@ from pathfinding import CELL_SIZE
 # Logical (canvas) resolution — game coordinates always live here
 WIDTH, HEIGHT = 1280, 720
 FPS = 60
+DEFAULT_SEED = 4874   # curated map: centred river, fords at rows 13+48, wide chokepoints
 FORMATION_SPACING = 90
 SIDEBAR_W = 220   # left panel width; sidebar overlays x=0..219 of the game canvas
 
@@ -51,7 +52,11 @@ BUILD_FARM_BTN       = _CMDS[0]   # Worker build menu
 BUILD_BARRACKS_BTN   = _CMDS[1]
 BUILD_LUMBERMILL_BTN = _CMDS[2]
 BUILD_BLACKSMITH_BTN = _CMDS[3]
+GATHER_BTN           = _CMDS[4]   # Worker: gather nearest resource (row 2, col 0)
 _QUEUE_SB_Y  = _CMD_SB_Y0 + 2 * _CMD_SB_DY + 6   # = 358  (queue dots below command grid)
+
+# Idle-worker badge — right end of the resource row; click cycles to next idle worker.
+_IDLE_W_BTN = pygame.Rect(172, 0, 44, 20)
 
 RESTART_BTN  = pygame.Rect(WIDTH // 2 - 80, HEIGHT // 2 + 50, 160, 40)
 _MUTE_BTN    = pygame.Rect(4,   HEIGHT - 28, 60, 20)
@@ -85,7 +90,8 @@ def _make_build_thumbs() -> "dict[str, pygame.Surface]":
     thumbs: dict = {}
     S = 36
 
-    for btype, stem in (("farm", "farm_team0"), ("barracks", "barracks_team0")):
+    for btype, stem in (("farm", "farm_team0"), ("barracks", "barracks_team0"),
+                        ("lumbermill", "lumbermill_team0"), ("blacksmith", "blacksmith_team0")):
         spr = _bsprites.get(stem)
         if spr:
             thumbs[btype] = pygame.transform.smoothscale(spr, (S, S))
@@ -107,26 +113,43 @@ def _make_build_thumbs() -> "dict[str, pygame.Surface]":
         pygame.draw.rect(s, (15, 25, 55), (12, 19, 12, 12))
         thumbs["barracks"] = s
 
-    # LumberMill — procedural only (no WC2 sprite extracted yet)
-    s = pygame.Surface((S, S), pygame.SRCALPHA)
-    s.fill((70, 45, 20))
-    pygame.draw.polygon(s, (90, 55, 25), [(1, 12), (18, 1), (35, 12)])
-    pygame.draw.rect(s, (120, 80, 40), (2, 11, 32, 22))
-    pygame.draw.line(s, (210, 210, 210), (5, 14), (30, 30), 3)
-    pygame.draw.line(s, (210, 210, 210), (30, 14), (5, 30), 3)
-    thumbs["lumbermill"] = s
+    if "lumbermill" not in thumbs:
+        s = pygame.Surface((S, S), pygame.SRCALPHA)
+        s.fill((70, 45, 20))
+        pygame.draw.polygon(s, (90, 55, 25), [(1, 12), (18, 1), (35, 12)])
+        pygame.draw.rect(s, (120, 80, 40), (2, 11, 32, 22))
+        pygame.draw.line(s, (210, 210, 210), (5, 14), (30, 30), 3)
+        pygame.draw.line(s, (210, 210, 210), (30, 14), (5, 30), 3)
+        thumbs["lumbermill"] = s
 
-    # Blacksmith — procedural only (no WC2 sprite extracted yet)
-    s = pygame.Surface((S, S), pygame.SRCALPHA)
-    s.fill((45, 40, 38))
-    pygame.draw.polygon(s, (60, 55, 50), [(1, 12), (18, 1), (35, 12)])
-    pygame.draw.rect(s, (80, 75, 70), (2, 11, 32, 22))
-    pygame.draw.rect(s, (160, 155, 150), (9, 20, 18, 8))
-    pygame.draw.rect(s, (160, 155, 150), (12, 17, 12, 5))
-    pygame.draw.circle(s, (220, 100, 20), (27, 26), 4)
-    thumbs["blacksmith"] = s
+    if "blacksmith" not in thumbs:
+        s = pygame.Surface((S, S), pygame.SRCALPHA)
+        s.fill((45, 40, 38))
+        pygame.draw.polygon(s, (60, 55, 50), [(1, 12), (18, 1), (35, 12)])
+        pygame.draw.rect(s, (80, 75, 70), (2, 11, 32, 22))
+        pygame.draw.rect(s, (160, 155, 150), (9, 20, 18, 8))
+        pygame.draw.rect(s, (160, 155, 150), (12, 17, 12, 5))
+        pygame.draw.circle(s, (220, 100, 20), (27, 26), 4)
+        thumbs["blacksmith"] = s
 
     return thumbs
+
+
+def _worker_gather(worker, buildings: list, game_map, player_hall) -> bool:
+    """Send a worker to the nearest available resource (mine first, then tree).
+    Returns True if an assignment was made."""
+    from building import GoldMine, Tree as _Tree
+    mines = [b for b in buildings if isinstance(b, GoldMine) and b.gold > 0]
+    trees = [b for b in buildings if isinstance(b, _Tree) and b.hp > 0]
+    if mines:
+        mine = min(mines, key=lambda m: (m.pos - worker.pos).length())
+        worker.order_harvest(mine, player_hall, game_map)
+        return True
+    if trees:
+        tree = min(trees, key=lambda t: (t.pos - worker.pos).length())
+        worker.order_chop(tree, player_hall, game_map, buildings)
+        return True
+    return False
 
 
 # Unit portrait thumbnails for training buttons — populated by init_ui_thumbs().
@@ -229,7 +252,9 @@ def _draw_info_tooltip(canvas: pygame.Surface, font: pygame.font.Font,
 
 def placement_valid(rect: pygame.Rect, buildings: list, game_map) -> bool:
     """True when rect fits on passable terrain without overlapping existing buildings."""
-    if rect.left < SIDEBAR_W or rect.top < 0 or rect.right > WIDTH or rect.bottom > HEIGHT:
+    map_w = game_map.grid_w * CELL_SIZE
+    map_h = game_map.grid_h * CELL_SIZE
+    if rect.left < 0 or rect.top < 0 or rect.right > map_w or rect.bottom > map_h:
         return False
     col0 = rect.left // CELL_SIZE
     row0 = rect.top // CELL_SIZE
@@ -239,8 +264,7 @@ def placement_valid(rect: pygame.Rect, buildings: list, game_map) -> bool:
         for r in range(row0, row1):
             if (c, r) in game_map.blocked:
                 return False
-    pad = rect.inflate(8, 8)
-    return not any(pad.colliderect(b.rect) for b in buildings)
+    return not any(rect.colliderect(b.rect) for b in buildings)
 
 
 def formation_targets(center: pygame.Vector2, count: int) -> list[pygame.Vector2]:
@@ -355,19 +379,52 @@ def draw_hud(canvas: pygame.Surface, font: pygame.font.Font,
     if team_upgrades is None:
         team_upgrades = set()
 
-    # ---- Sidebar background + right border ----
-    pygame.draw.rect(canvas, (18, 20, 28), (0, 0, SIDEBAR_W, HEIGHT))
-    pygame.draw.line(canvas, (70, 70, 100), (SIDEBAR_W - 1, 0), (SIDEBAR_W - 1, HEIGHT))
+    # ---- Sidebar background ----
+    pygame.draw.rect(canvas, (18, 20, 30), (0, 0, SIDEBAR_W, HEIGHT))
+    # Header strip (resource row)
+    pygame.draw.rect(canvas, (24, 27, 40), (0, 0, SIDEBAR_W, 22))
+    # Right border: shadow + highlight lines for a slight panel-edge look
+    pygame.draw.line(canvas, (8, 9, 14),   (SIDEBAR_W - 2, 0), (SIDEBAR_W - 2, HEIGHT))
+    pygame.draw.line(canvas, (80, 85, 120), (SIDEBAR_W - 1, 0), (SIDEBAR_W - 1, HEIGHT))
 
     # ---- Resources row (top of sidebar) ----
     food_used, food_cap = food_stats(buildings, units)
-    canvas.blit(font.render(f"G:{gold[0]}",           True, (255, 215, 0)),    (_MINI_SB_X, 4))
-    canvas.blit(font.render(f"L:{lumber[0]}",         True, (120, 200, 80)),   (_MINI_SB_X + 78, 4))
-    canvas.blit(font.render(f"F:{food_used}/{food_cap}", True, (200, 230, 200)), (_MINI_SB_X + 148, 4))
+    # Small colored icon squares beside each resource value
+    _rx = _MINI_SB_X
+    pygame.draw.rect(canvas, (220, 180, 0), (_rx, 7, 7, 7))
+    canvas.blit(font.render(str(gold[0]),             True, (255, 215, 0)),    (_rx + 10, 4))
+    _rx += 66
+    pygame.draw.rect(canvas, (80, 160, 50), (_rx, 7, 7, 7))
+    canvas.blit(font.render(str(lumber[0]),           True, (120, 200, 80)),   (_rx + 10, 4))
+    _rx += 62
+    pygame.draw.rect(canvas, (150, 200, 150), (_rx, 7, 7, 7))
+    canvas.blit(font.render(f"{food_used}/{food_cap}", True, (200, 230, 200)), (_rx + 10, 4))
 
-    # ---- Section dividers ----
-    pygame.draw.line(canvas, (55, 55, 80), (4, _SB_DIV1_Y), (SIDEBAR_W - 6, _SB_DIV1_Y))
-    pygame.draw.line(canvas, (55, 55, 80), (4, _SB_DIV2_Y), (SIDEBAR_W - 6, _SB_DIV2_Y))
+    # Idle worker badge — flashes when any team-0 worker is idle
+    idle_workers = [u for u in units
+                    if hasattr(u, '_wstate') and u._wstate == "idle" and u.team == 0]
+    if idle_workers:
+        flash = int(pygame.time.get_ticks() / 450) % 2
+        badge_col = (255, 160, 0) if flash else (180, 100, 0)
+        pygame.draw.rect(canvas, (40, 30, 10), _IDLE_W_BTN)
+        pygame.draw.rect(canvas, badge_col, _IDLE_W_BTN, 1)
+        canvas.blit(font.render(f"W:{len(idle_workers)}", True, badge_col),
+                    (_IDLE_W_BTN.x + 3, _IDLE_W_BTN.y + 2))
+
+    # ---- Section dividers: double-line for a subtle recessed look ----
+    for dy in (_SB_DIV1_Y, _SB_DIV2_Y):
+        pygame.draw.line(canvas, (10, 11, 18),  (4, dy),     (SIDEBAR_W - 6, dy))
+        pygame.draw.line(canvas, (60, 65, 90),  (4, dy + 1), (SIDEBAR_W - 6, dy + 1))
+
+    # Minimap panel border
+    mini_rect = pygame.Rect(_MINI_SB_X - 2, _MINI_SB_Y - 2, 204, 114)
+    pygame.draw.rect(canvas, (10, 11, 18),  mini_rect, 2)
+    pygame.draw.rect(canvas, (55, 60, 85),  mini_rect.inflate(-2, -2), 1)
+
+    # Command area background panel
+    _cmd_area = pygame.Rect(2, _SB_DIV2_Y + 2, SIDEBAR_W - 4, 120)
+    pygame.draw.rect(canvas, (20, 22, 34), _cmd_area)
+    pygame.draw.rect(canvas, (42, 46, 68), _cmd_area, 1)
 
     # ---- Command buttons — context-sensitive ----
     worker_selected = any(isinstance(u, Worker) for u in selected) if selected else False
@@ -400,6 +457,24 @@ def draw_hud(canvas: pygame.Surface, font: pygame.font.Font,
         if _hovered_build:
             _draw_build_tooltip(canvas, font, *_hovered_build)
 
+        # Gather button (slot 4) — shown when at least one selected worker is idle
+        idle_sel = [u for u in selected if hasattr(u, '_wstate') and u._wstate == "idle"]
+        if idle_sel and not build_mode:
+            bg = (30, 65, 30)
+            bd = (60, 130, 60)
+            pygame.draw.rect(canvas, bg, GATHER_BTN)
+            pygame.draw.rect(canvas, bd, GATHER_BTN, 1)
+            thumb = _unit_thumbs.get("worker")
+            if thumb:
+                canvas.blit(thumb, (GATHER_BTN.x + 5, GATHER_BTN.y + 5))
+            canvas.blit(font.render("Gath", True, (140, 220, 140)),
+                        (GATHER_BTN.x + 2, GATHER_BTN.y + 32))
+            if GATHER_BTN.collidepoint(mouse_pos):
+                _draw_info_tooltip(canvas, font, GATHER_BTN, [
+                    ("Gather", (200, 240, 200)),
+                    ("Send to nearest resource", (140, 180, 140)),
+                ])
+
     # ---- Info section: build-mode prompt, unit info, or building info ----
     if build_mode:
         _BNAMES = {"farm": "Farm", "barracks": "Barracks",
@@ -418,11 +493,23 @@ def draw_hud(canvas: pygame.Surface, font: pygame.font.Font,
                     (_MINI_SB_X, _SB_INFO_Y0))
         canvas.blit(font.render(f"HP {selected_building.hp}/{selected_building.max_hp}{bld_status}",
                                 True, (155, 175, 195)), (_MINI_SB_X, _SB_INFO_Y0 + 18))
-        unlocks_text = _BUILDING_UNLOCKS.get(selected_building.label)
-        if unlocks_text:
-            for i, line in enumerate(unlocks_text.split("  |  ")[:2]):
-                canvas.blit(font.render(line, True, (120, 175, 120)),
-                            (_MINI_SB_X, _SB_INFO_Y0 + 36 + i * 16))
+        if isinstance(selected_building, GoldMine):
+            gold_left = selected_building.gold
+            pct = gold_left / 5000
+            bar_w = SIDEBAR_W - 2 * _MINI_SB_X
+            col_g = (255, 215, 0) if gold_left > 1000 else (200, 150, 0) if gold_left > 0 else (100, 100, 100)
+            canvas.blit(font.render(f"Gold: {gold_left}", True, col_g), (_MINI_SB_X, _SB_INFO_Y0 + 36))
+            pygame.draw.rect(canvas, (50, 50, 30), (_MINI_SB_X, _SB_INFO_Y0 + 52, bar_w, 6))
+            pygame.draw.rect(canvas, col_g,        (_MINI_SB_X, _SB_INFO_Y0 + 52, int(bar_w * max(0, pct)), 6))
+            if selected_building.workers_inside:
+                canvas.blit(font.render(f"Miners inside: {selected_building.workers_inside}",
+                                        True, (180, 220, 140)), (_MINI_SB_X, _SB_INFO_Y0 + 62))
+        else:
+            unlocks_text = _BUILDING_UNLOCKS.get(selected_building.label)
+            if unlocks_text:
+                for i, line in enumerate(unlocks_text.split("  |  ")[:2]):
+                    canvas.blit(font.render(line, True, (120, 175, 120)),
+                                (_MINI_SB_X, _SB_INFO_Y0 + 36 + i * 16))
 
         # Building-specific command buttons
         if isinstance(selected_building, TownHall) and selected_building.team == 0:
@@ -609,8 +696,10 @@ def _pos_to_grid(pos: pygame.Vector2) -> tuple[int, int]:
 
 def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
              font: pygame.font.Font, big_font: pygame.font.Font,
-             difficulty: str = "normal") -> tuple[bool, str]:
-    """Play one match. Returns (restart, difficulty)."""
+             difficulty: str = "normal",
+             map_seed: "int | None" = None) -> "tuple[bool, str, int | None]":
+    """Play one match. Returns (restart, difficulty, next_seed)."""
+    import random as _rand
 
     # Internal render canvas — all game drawing goes here at a fixed 1280×720.
     # At frame end it's scaled to whatever the display surface is.
@@ -618,11 +707,17 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
     fullscreen = False
 
     def to_game(pos: tuple) -> tuple[int, int]:
-        """Translate physical mouse coords → canvas (game) coords."""
+        """Translate physical mouse coords → canvas coords."""
         sw, sh = screen.get_size()
         if sw == WIDTH and sh == HEIGHT:
             return (int(pos[0]), int(pos[1]))
         return (int(pos[0] * WIDTH / sw), int(pos[1] * HEIGHT / sh))
+
+    def to_world(pos: tuple) -> tuple[int, int]:
+        """Translate physical mouse coords → world (map) coords.
+        The game viewport occupies canvas x=[SIDEBAR_W, WIDTH], so subtract the sidebar offset."""
+        gp = to_game(pos)
+        return (gp[0] - SIDEBAR_W + cam_ix, gp[1] + cam_iy)
 
     def toggle_fullscreen() -> None:
         nonlocal screen, fullscreen
@@ -668,51 +763,136 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
         return war2_sheets.get((unit_type, team))
 
     # --- Map ---
-    game_map = GameMap(WIDTH, HEIGHT)
-    fog      = FogOfWar(game_map.grid_w, game_map.grid_h)
-    minimap  = Minimap(DEFAULT_MAP)
+    the_seed  = map_seed if map_seed is not None else _rand.randint(0, 0xFFFF)
+    tile_map  = generate_map(64, 64, seed=the_seed)
+    minimap   = Minimap(tile_map)   # bake minimap before conversion so forest shows dark-green
+
+    # Convert all non-border 'T' cells → 'G' and build Tree objects for each.
+    # Bitmasks are computed before conversion so all 'T' neighbors are still visible.
+    _fm_rows = len(tile_map)
+    _fm_cols = len(tile_map[0]) if tile_map else 64
+    _forest_cells: list[tuple[int, int]] = [
+        (_c, _r)
+        for _r in range(_fm_rows)
+        for _c in range(_fm_cols)
+        if tile_map[_r][_c] == 'T'
+    ]
+
+    def _tmask(c: int, r: int) -> int:
+        mask = 0
+        for bit, dc, dr in ((1, 0, -1), (2, 1, 0), (4, 0, 1), (8, -1, 0)):
+            nr, nc = r + dr, c + dc
+            if not (0 <= nr < _fm_rows and 0 <= nc < _fm_cols):
+                mask |= bit
+            elif tile_map[nr][nc] == 'T':
+                mask |= bit
+        return mask
+
+    _forest_bitmasks = {(c, r): _tmask(c, r) for c, r in _forest_cells}
+    for _r in range(_fm_rows):
+        if 'T' not in tile_map[_r]:
+            continue
+        tile_map[_r] = tile_map[_r].replace('T', 'G')
+    _forest_trees = [
+        Tree(_c * CELL_SIZE, _r * CELL_SIZE, bitmask=_forest_bitmasks[(_c, _r)])
+        for _c, _r in _forest_cells
+    ]
+
+    game_map  = GameMap(tile_map)
+    fog       = FogOfWar(game_map.grid_w, game_map.grid_h)
+    map_px_w  = game_map.grid_w * CELL_SIZE
+    map_px_h  = game_map.grid_h * CELL_SIZE
+
+    # Camera
+    cam    = pygame.Vector2(0, 0)
+    cam_ix = cam_iy = 0   # integer snapshots updated each frame
+    SCROLL_SPEED = 500     # world-pixels per second
+    SCROLL_EDGE  = 20      # px from canvas edge that triggers scroll
+
+    # World surface — all game objects draw here; we blit a viewport to canvas
+    world_surf = pygame.Surface((map_px_w, map_px_h))
+
+    # Move-order click marker: (world_x, world_y, life_remaining_s) or None
+    _move_marker: "tuple | None" = None
 
     # --- Buildings ---
-    # Trees: 4×3 clusters at each corner (cols 6-9, rows 0-2 player; cols 30-33, rows 0-2 enemy)
-    _trees = [Tree(c * 32, r * 32)
-              for c in range(6, 10) for r in range(0, 3)] + \
-             [Tree(c * 32, r * 32)
-              for c in range(30, 34) for r in range(0, 3)]
+    # Find clear base areas and lay out buildings relative to them
+    pc, pr = find_base_area(tile_map, 'left',  min_clear=12)
+    ec, er = find_base_area(tile_map, 'right', min_clear=12)
 
-    # Building positions are grid-snapped (multiples of 32px) so obstacle cells
-    # align cleanly and leave 1-cell gaps for unit navigation.
-    buildings: list = [
-        TownHall(288,  256, team=0),   # 128×96 → cols 9-12, rows 8-10  (past sidebar)
-        Barracks(288,  384, team=0),   # 96×96  → cols 9-11, rows 12-14
-        Farm(448,  384, team=0),       # 64×64  → cols 14-15, rows 12-13
-        Farm(384,  192, team=0),       # 64×64  → cols 12-13, rows  6-7  (above TownHall)
-        TownHall(1088, 256, team=1),   # 128×96 → cols 34-37, rows 8-10
-        Barracks(1152, 384, team=1),   # 96×96  → cols 36-38, rows 12-14
-        Farm(992,  384, team=1),       # 64×64  → cols 31-32, rows 12-13
-        Farm(1088, 384, team=1),       # 64×64  → cols 34-35, rows 12-13
-        GoldMine(288,   96),           # 96×96  → cols 9-11, rows 3-5
-        GoldMine(1152,  96),           # 96×96  → cols 36-38, rows 3-5
-    ] + _trees
+    def _snap(v: int) -> int:
+        return (v // CELL_SIZE) * CELL_SIZE
+
+    # Player base layout (all positions grid-snapped)
+    px, py = pc * CELL_SIZE, pr * CELL_SIZE
+    p_hall_x = _snap(px)
+    p_hall_y = _snap(py + 4 * CELL_SIZE)   # 4 rows below base edge so mine has visual gap
+    # GoldMine: 3×3 cells, placed above TownHall with 3-row gap so peasant is visible
+    p_mine_x  = _snap(p_hall_x)
+    p_mine_y  = _snap(p_hall_y - GoldMine.H - 3 * CELL_SIZE)
+
+    # Enemy base layout (mirror: halls open toward river, i.e. toward left)
+    ex_right = (ec + 12) * CELL_SIZE   # rightmost column of enemy clear area
+    e_hall_x  = _snap(ex_right - TownHall.W - CELL_SIZE)
+    e_hall_y  = _snap(er * CELL_SIZE + 4 * CELL_SIZE)
+    e_mine_x  = _snap(e_hall_x + TownHall.W // 2)
+    e_mine_y  = _snap(e_hall_y - GoldMine.H - 3 * CELL_SIZE)
+
+    _fixed_bldgs: list = [
+        TownHall(p_hall_x, p_hall_y, team=0),
+        Barracks(p_hall_x, p_hall_y + TownHall.H + 3 * CELL_SIZE, team=0),
+        Farm(p_hall_x + TownHall.W + 3 * CELL_SIZE, p_hall_y, team=0),
+        Farm(p_hall_x + TownHall.W + 3 * CELL_SIZE, p_hall_y + Farm.H + 2 * CELL_SIZE, team=0),
+        TownHall(e_hall_x, e_hall_y, team=1),
+        Barracks(e_hall_x, e_hall_y + TownHall.H + 3 * CELL_SIZE, team=1),
+        Farm(e_hall_x - Farm.W - 3 * CELL_SIZE, e_hall_y, team=1),
+        Farm(e_hall_x - Farm.W - 3 * CELL_SIZE, e_hall_y + Farm.H + 2 * CELL_SIZE, team=1),
+        GoldMine(p_mine_x, p_mine_y),
+        GoldMine(e_mine_x, e_mine_y),
+    ]
+    _forest_trees = [t for t in _forest_trees
+                     if not any(t.rect.colliderect(b.rect) for b in _fixed_bldgs)]
+    buildings: list = _fixed_bldgs + _forest_trees
 
     for b in buildings:
         game_map.add_obstacle(b.rect)
 
     player_hall = next(b for b in buildings if isinstance(b, TownHall) and b.team == 0)
 
-    # --- Units ---
+    # Start camera centered on the player's TownHall
+    cam.x = max(0, min(map_px_w - WIDTH,  player_hall.rect.centerx - WIDTH  // 2))
+    cam.y = max(0, min(map_px_h - HEIGHT, player_hall.rect.centery - HEIGHT // 2))
+
+    # --- Units — spawned adjacent to their TownHall ---
+    def _spawn_near(hall, dx, dy, utype, team):
+        x = _snap(hall.rect.right + dx)
+        y = _snap(hall.rect.top   + dy)
+        return x, y
+
+    ph = player_hall
+    eh = next(b for b in buildings if isinstance(b, TownHall) and b.team == 1)
+
+    # Spawn in the 3-cell gap between TownHall and Farm (not on the farm).
+    _p_sx = ph.rect.right + CELL_SIZE
+    _e_sx = eh.rect.left  - CELL_SIZE
     units: list = [
-        Unit(536, 330,  _sprite('footman', 0), team=0, sheet=_sheet('footman', 0)),
-        Unit(636, 330,  _sprite('footman', 0), team=0, sheet=_sheet('footman', 0)),
-        Worker(436, 360, _sprite('worker',  0), team=0, sheet=_sheet('worker',  0)),
-        Unit(1040, 360,  _sprite('footman', 1), team=1, sheet=_sheet('footman', 1)),
-        Worker(1200, 380, _sprite('worker',  1), team=1, sheet=_sheet('worker',  1)),
+        Unit(_p_sx, ph.rect.centery - 16,
+             _sprite('footman', 0), team=0, sheet=_sheet('footman', 0)),
+        Unit(_p_sx, ph.rect.centery + 16,
+             _sprite('footman', 0), team=0, sheet=_sheet('footman', 0)),
+        Worker(_p_sx, ph.rect.centery + 48,
+               _sprite('worker', 0), team=0, sheet=_sheet('worker', 0)),
+        Unit(_e_sx, eh.rect.centery - 16,
+             _sprite('footman', 1), team=1, sheet=_sheet('footman', 1)),
+        Worker(_e_sx, eh.rect.centery + 32,
+               _sprite('worker', 1), team=1, sheet=_sheet('worker', 1)),
     ]
 
     corpses: list[Corpse] = []
     projectiles: list[Projectile] = []
 
     gold: dict[int, int] = {0: 500, 1: 500}
-    lumber: dict[int, int] = {0: 0, 1: 0}
+    lumber: dict[int, int] = {0: 200, 1: 200}
     upgrades: dict[int, set] = {0: set(), 1: set()}   # completed research IDs per team
     selected: list = []
     selected_building = None
@@ -724,7 +904,7 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
     build_ghost: tuple[int, int] = (0, 0)
 
     ai = AIController(
-        team=1, buildings=buildings, units=units, gold=gold,
+        team=1, buildings=buildings, units=units, gold=gold, lumber=lumber,
         game_map=game_map,
         enemy_sprite=_sprite('footman', 1),
         worker_sprite=_sprite('worker',  1),
@@ -738,7 +918,7 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
         # ---- Events ----
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                return False, difficulty
+                return False, difficulty, None
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     if build_mode:
@@ -746,7 +926,7 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
                     elif fullscreen:
                         toggle_fullscreen()
                     else:
-                        return False, difficulty
+                        return False, difficulty, None
                 elif event.key == pygame.K_F11:
                     toggle_fullscreen()
                 elif event.key == pygame.K_m:
@@ -760,14 +940,33 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
                 if event.type == pygame.MOUSEBUTTONDOWN:
                     gp = to_game(event.pos)
                     if RESTART_BTN.collidepoint(gp):
-                        return True, difficulty
+                        return True, difficulty, the_seed
                 continue
 
             if event.type == pygame.MOUSEBUTTONDOWN:
-                gp = to_game(event.pos)
+                gp = to_game(event.pos)    # canvas coords — for sidebar UI
+                wp = to_world(event.pos)   # world coords  — for map interactions
 
                 if event.button == 1:
-                    if _MUTE_BTN.collidepoint(gp):
+                    # Minimap click → jump camera to that world location
+                    if minimap.rect and minimap.rect.collidepoint(gp):
+                        mx = gp[0] - minimap.rect.x
+                        my = gp[1] - minimap.rect.y
+                        cx, cy = minimap.world_to_cam(mx, my,
+                                                      WIDTH - SIDEBAR_W, HEIGHT,
+                                                      map_px_w, map_px_h)
+                        cam.x, cam.y = cx, cy
+                        cam_ix, cam_iy = int(cam.x), int(cam.y)
+                    elif _IDLE_W_BTN.collidepoint(gp):
+                        # Cycle to next idle worker
+                        idle = [u for u in units
+                                if isinstance(u, Worker) and u.team == 0 and u._wstate == "idle"]
+                        if idle:
+                            selected = apply_selection(selected, [idle[0]])
+                            if selected_building:
+                                selected_building.selected = False
+                                selected_building = None
+                    elif _MUTE_BTN.collidepoint(gp):
                         _set_mute(not muted)
                     elif _FS_BTN.collidepoint(gp):
                         toggle_fullscreen()
@@ -776,36 +975,14 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
                         difficulty = _DIFF_LEVELS[(idx + 1) % len(_DIFF_LEVELS)]
                         ai._army_threshold = AI_DIFFICULTY[difficulty]["army_threshold"]
                         ai._wave_interval  = AI_DIFFICULTY[difficulty]["wave_interval"]
-                    elif BUILD_FARM_BTN.collidepoint(gp):
-                        build_mode = None if build_mode == "farm" else "farm"
-                        selected = apply_selection(selected, [])
-                        if selected_building:
-                            selected_building.selected = False
-                            selected_building = None
-                    elif BUILD_BARRACKS_BTN.collidepoint(gp):
-                        build_mode = None if build_mode == "barracks" else "barracks"
-                        selected = apply_selection(selected, [])
-                        if selected_building:
-                            selected_building.selected = False
-                            selected_building = None
-                    elif BUILD_LUMBERMILL_BTN.collidepoint(gp):
-                        build_mode = None if build_mode == "lumbermill" else "lumbermill"
-                        selected = apply_selection(selected, [])
-                        if selected_building:
-                            selected_building.selected = False
-                            selected_building = None
-                    elif BUILD_BLACKSMITH_BTN.collidepoint(gp):
-                        build_mode = None if build_mode == "blacksmith" else "blacksmith"
-                        selected = apply_selection(selected, [])
-                        if selected_building:
-                            selected_building.selected = False
-                            selected_building = None
+                    # Building placement must be checked before building-selected branches
+                    # so a viewport click always places when build_mode is active.
                     elif build_mode and gp[0] >= SIDEBAR_W:
                         _BCLS = {"farm": Farm, "barracks": Barracks,
                                  "lumbermill": LumberMill, "blacksmith": Blacksmith}
                         bcls = _BCLS[build_mode]
-                        sx = (gp[0] // CELL_SIZE) * CELL_SIZE
-                        sy = (gp[1] // CELL_SIZE) * CELL_SIZE
+                        sx = (wp[0] // CELL_SIZE) * CELL_SIZE
+                        sy = (wp[1] // CELL_SIZE) * CELL_SIZE
                         ghost_rect = pygame.Rect(sx, sy, bcls.W, bcls.H)
                         cost_g, cost_l = BUILD_COSTS[build_mode]
                         if (placement_valid(ghost_rect, buildings, game_map)
@@ -817,11 +994,15 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
                             gold[0] -= cost_g
                             lumber[0] -= cost_l
                             # keep build_mode active so player can chain-place
+                    # Building-selected branches come next — these share button slots with
+                    # the worker build menu (BUILD_FARM_BTN == TRAIN_BTN == _CMDS[0]).
+                    # They MUST be checked before the BUILD_* branches below.
                     elif (selected_building is not None
                             and isinstance(selected_building, TownHall)):
                         food_used, food_cap = food_stats(buildings, units)
                         if TRAIN_BTN.collidepoint(gp) and food_used < food_cap:
-                            selected_building.enqueue(gold, "worker")
+                            if selected_building.enqueue(gold, "worker", buildings):
+                                _play("train_start")
                         elif gp[0] >= SIDEBAR_W:
                             drag_start = pygame.Vector2(gp)
                             drag_current = pygame.Vector2(gp)
@@ -829,13 +1010,16 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
                             and isinstance(selected_building, Barracks)):
                         food_used, food_cap = food_stats(buildings, units)
                         if TRAIN_BTN.collidepoint(gp) and food_used < food_cap:
-                            selected_building.enqueue(gold, "footman")
+                            if selected_building.enqueue(gold, "footman", buildings):
+                                _play("train_start")
                         elif TRAIN_ARCHER_BTN.collidepoint(gp) and food_used < food_cap:
-                            selected_building.enqueue(gold, "archer")
+                            if selected_building.enqueue(gold, "archer", buildings):
+                                _play("train_start")
                         elif (TRAIN_KNIGHT_BTN.collidepoint(gp) and food_used < food_cap
                               and any(isinstance(b, Blacksmith) and b.team == 0
                                       and b.is_complete for b in buildings)):
-                            selected_building.enqueue(gold, "knight")
+                            if selected_building.enqueue(gold, "knight", buildings):
+                                _play("train_start")
                         elif gp[0] >= SIDEBAR_W:
                             drag_start = pygame.Vector2(gp)
                             drag_current = pygame.Vector2(gp)
@@ -848,8 +1032,9 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
                             (RESEARCH_BTN_4,    "armor_2"),
                         ]:
                             if btn.collidepoint(gp):
-                                selected_building.enqueue_research(
-                                    gold, lumber, rid, upgrades[0])
+                                if selected_building.enqueue_research(
+                                        gold, lumber, rid, upgrades[0]):
+                                    _play("train_start")
                                 break
                         else:
                             if gp[0] >= SIDEBAR_W:
@@ -858,13 +1043,31 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
                     elif (selected_building is not None
                             and isinstance(selected_building, LumberMill)):
                         if TRAIN_BTN.collidepoint(gp):
-                            selected_building.enqueue_research(
-                                gold, lumber, "ranger", upgrades[0])
+                            if selected_building.enqueue_research(
+                                    gold, lumber, "ranger", upgrades[0]):
+                                _play("train_start")
                         elif gp[0] >= SIDEBAR_W:
                             drag_start = pygame.Vector2(gp)
                             drag_current = pygame.Vector2(gp)
                     elif gp[0] < SIDEBAR_W and selected_building is not None:
                         pass
+                    # Worker build menu — only reachable when no building is selected.
+                    elif BUILD_FARM_BTN.collidepoint(gp):
+                        build_mode = None if build_mode == "farm" else "farm"
+                        selected = apply_selection(selected, [])
+                    elif BUILD_BARRACKS_BTN.collidepoint(gp):
+                        build_mode = None if build_mode == "barracks" else "barracks"
+                        selected = apply_selection(selected, [])
+                    elif BUILD_LUMBERMILL_BTN.collidepoint(gp):
+                        build_mode = None if build_mode == "lumbermill" else "lumbermill"
+                        selected = apply_selection(selected, [])
+                    elif BUILD_BLACKSMITH_BTN.collidepoint(gp):
+                        build_mode = None if build_mode == "blacksmith" else "blacksmith"
+                        selected = apply_selection(selected, [])
+                    elif GATHER_BTN.collidepoint(gp):
+                        for u in selected:
+                            if isinstance(u, Worker) and u._wstate == "idle":
+                                _worker_gather(u, buildings, game_map, player_hall)
                     else:
                         drag_start = pygame.Vector2(gp)
                         drag_current = pygame.Vector2(gp)
@@ -873,15 +1076,15 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
                     if build_mode:
                         build_mode = None
                     elif selected and gp[0] >= SIDEBAR_W:
-                        gv = pygame.Vector2(gp)
+                        gv = pygame.Vector2(wp)   # world coords for movement targets
                         enemy_unit = next((u for u in units if u.team == 1
-                                           and u.contains_point(gp)), None)
+                                           and u.contains_point(wp)), None)
                         enemy_bldg = next((b for b in buildings if b.team == 1
-                                           and b.contains_point(gp)), None)
+                                           and b.contains_point(wp)), None)
                         mine = next((b for b in buildings if isinstance(b, GoldMine)
-                                      and b.contains_point(gp)), None)
+                                      and b.contains_point(wp)), None)
                         tree = next((b for b in buildings if isinstance(b, Tree)
-                                      and b.contains_point(gp) and b.hp > 0), None)
+                                      and b.contains_point(wp) and b.hp > 0), None)
 
                         if enemy_unit:
                             for u in selected:
@@ -897,9 +1100,10 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
                                 else:
                                     movers.append(u)
                             if movers:
+                                other_cells = {u.cell for u in units if u not in selected}
                                 tgts = formation_targets(gv, len(movers))
                                 for u, tgt in zip(movers, tgts):
-                                    u.move_to(game_map.find_path(u.pos, tgt))
+                                    u.move_to(game_map.find_path(u.pos, tgt, other_cells))
                                 _play('move')
                         elif tree:
                             movers = []
@@ -909,22 +1113,36 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
                                 else:
                                     movers.append(u)
                             if movers:
+                                other_cells = {u.cell for u in units if u not in selected}
                                 tgts = formation_targets(gv, len(movers))
                                 for u, tgt in zip(movers, tgts):
-                                    u.move_to(game_map.find_path(u.pos, tgt))
+                                    u.move_to(game_map.find_path(u.pos, tgt, other_cells))
                                 _play('move')
                         else:
+                            other_cells = {u.cell for u in units if u not in selected}
                             tgts = formation_targets(gv, len(selected))
                             for u, tgt in zip(selected, tgts):
-                                u.move_to(game_map.find_path(u.pos, tgt))
+                                u.move_to(game_map.find_path(u.pos, tgt, other_cells))
                             _play('move')
+                            _move_marker = (gv.x, gv.y, 0.55)
 
             elif event.type == pygame.MOUSEMOTION:
                 gp_m = to_game(event.pos)
+                # Drag on minimap → pan camera
+                if (pygame.mouse.get_pressed()[0]
+                        and minimap.rect and minimap.rect.collidepoint(gp_m)):
+                    mx = gp_m[0] - minimap.rect.x
+                    my = gp_m[1] - minimap.rect.y
+                    cx, cy = minimap.world_to_cam(mx, my,
+                                                  WIDTH - SIDEBAR_W, HEIGHT,
+                                                  map_px_w, map_px_h)
+                    cam.x, cam.y = cx, cy
+                    cam_ix, cam_iy = int(cam.x), int(cam.y)
                 if drag_start is not None:
-                    drag_current = pygame.Vector2(gp_m)
+                    drag_current = pygame.Vector2(gp_m)   # canvas coords for drawing
                 if build_mode:
-                    build_ghost = gp_m
+                    # store world coords so ghost placement is correct after scrolling
+                    build_ghost = (gp_m[0] - SIDEBAR_W + cam_ix, gp_m[1] + cam_iy)
 
             elif (event.type == pygame.MOUSEBUTTONUP
                   and event.button == 1 and drag_start is not None):
@@ -932,8 +1150,10 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
                 delta = end - drag_start
 
                 if delta.length() > 4:
+                    # sel_rect in world coords so it can match unit.rect
                     sel_rect = pygame.Rect(
-                        int(min(drag_start.x, end.x)), int(min(drag_start.y, end.y)),
+                        int(min(drag_start.x, end.x)) - SIDEBAR_W + cam_ix,
+                        int(min(drag_start.y, end.y)) + cam_iy,
                         int(abs(delta.x)), int(abs(delta.y)),
                     )
                     new_sel = [u for u in units
@@ -945,9 +1165,16 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
                     if selected:
                         _play('select')
                 else:
-                    gp = (int(end.x), int(end.y))
-                    _bc = [b for b in buildings if b.team == 0 and b.contains_point(gp)]
-                    bldg = (min(_bc, key=lambda b: (b.pos - pygame.Vector2(gp)).length())
+                    # Single click — convert canvas coords to world coords
+                    wp_up = (int(end.x) - SIDEBAR_W + cam_ix, int(end.y) + cam_iy)
+                    _tc, _tr = wp_up[0] // CELL_SIZE, wp_up[1] // CELL_SIZE
+                    if 0 <= _tr < len(tile_map) and 0 <= _tc < len(tile_map[_tr]):
+                        _ttype = tile_map[_tr][_tc]
+                        _here = next((b for b in buildings if b.contains_point(wp_up)), None)
+                        _extra = f" + {type(_here).__name__}" if _here else ""
+                        print(f"[click] tile ({_tc},{_tr}) = '{_ttype}'{_extra}  world ({wp_up[0]},{wp_up[1]})")
+                    _bc = [b for b in buildings if b.team in (0, -1) and b.contains_point(wp_up)]
+                    bldg = (min(_bc, key=lambda b: (b.pos - pygame.Vector2(wp_up)).length())
                             if _bc else None)
                     if bldg:
                         if selected_building:
@@ -960,7 +1187,7 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
                             selected_building.selected = False
                             selected_building = None
                         clicked = next((u for u in units
-                                         if u.team == 0 and u.contains_point(gp)), None)
+                                         if u.team == 0 and u.contains_point(wp_up)), None)
                         new_sel = [clicked] if clicked else []
                         selected = apply_selection(selected, new_sel)
                         if selected:
@@ -968,6 +1195,16 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
 
                 drag_start = None
                 drag_current = None
+
+        # ---- Camera edge scroll (game viewport only — ignore sidebar) ----
+        _ms = to_game(pygame.mouse.get_pos())
+        if SIDEBAR_W < _ms[0] < SIDEBAR_W + SCROLL_EDGE:  cam.x -= SCROLL_SPEED * dt
+        elif _ms[0] > WIDTH - SCROLL_EDGE:                 cam.x += SCROLL_SPEED * dt
+        if _ms[1] < SCROLL_EDGE:                           cam.y -= SCROLL_SPEED * dt
+        elif _ms[1] > HEIGHT - SCROLL_EDGE:                cam.y += SCROLL_SPEED * dt
+        cam.x = max(0, min(map_px_w - WIDTH,  cam.x))
+        cam.y = max(0, min(map_px_h - HEIGHT, cam.y))
+        cam_ix, cam_iy = int(cam.x), int(cam.y)
 
         # ---- Update (frozen when game over) ----
         if game_over is None:
@@ -1012,9 +1249,17 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
                     lumber[u.team] += u.lumber_delivered
                     u.lumber_delivered = 0
 
-            # Construction progress
+            # Construction progress + lumber mill carry bonus
             for b in buildings:
                 b.update_construction(dt)
+            for b in buildings:
+                if isinstance(b, LumberMill) and b.is_complete:
+                    if not getattr(b, '_carry_bonus_applied', False):
+                        b._carry_bonus_applied = True
+                        cap = Worker.LUMBER_CARRY_CAP + LumberMill.CARRY_BONUS
+                        for u in units:
+                            if isinstance(u, Worker) and u.team == b.team:
+                                u._lumber_carry_cap = cap
 
             def _apply_upgrades(unit: Unit, team: int) -> None:
                 """Apply all completed research effects to a newly created unit."""
@@ -1055,6 +1300,9 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
                     if unit_type == "worker":
                         new_unit = Worker(sp.x, sp.y, _sprite('worker', b.team), team=b.team,
                                           sheet=_sheet('worker', b.team))
+                        if any(isinstance(bld, LumberMill) and bld.team == b.team and bld.is_complete
+                               for bld in buildings):
+                            new_unit._lumber_carry_cap = Worker.LUMBER_CARRY_CAP + LumberMill.CARRY_BONUS
                     elif unit_type == "archer":
                         new_unit = Archer(sp.x, sp.y, _sprite('archer', b.team), team=b.team,
                                           sheet=_sheet('archer', b.team))
@@ -1069,10 +1317,22 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
                     if b.team == 0:
                         _play('train_done')
 
+            # Push apart units that share a cell (1×1 tile separation)
+            for i, u1 in enumerate(units):
+                for u2 in units[i + 1:]:
+                    diff = u1.pos - u2.pos
+                    d = diff.length_squared()
+                    if 0 < d < CELL_SIZE * CELL_SIZE:
+                        sep = diff * ((CELL_SIZE / d ** 0.5 - 1) * 0.5)
+                        u1.pos += sep
+                        u1.rect.center = (int(u1.pos.x), int(u1.pos.y))
+                        u2.pos -= sep
+                        u2.rect.center = (int(u2.pos.x), int(u2.pos.y))
+
             # Corpse + sound on death
             for u in units:
                 if not u.is_alive():
-                    corpses.append(Corpse(u.pos, u.team))
+                    corpses.append(Corpse(u.pos, u.team, sheet=u._sheet))
                     _play('death')
 
             units = [u for u in units if u.is_alive()]
@@ -1097,26 +1357,66 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
             elif not any(isinstance(b, TownHall) and b.team == 0 for b in buildings):
                 game_over = "defeat"
 
-        # ---- Draw to canvas ----
-        game_map.draw(canvas)
+        # ---- Draw world objects to world_surf ----
+        world_surf.fill((0, 0, 0))
+        game_map.draw(world_surf)
 
         for c in corpses:
-            c.draw(canvas)
+            c.draw(world_surf)
 
+        _vp = pygame.Rect(cam_ix, cam_iy, WIDTH - SIDEBAR_W, HEIGHT)
         for b in buildings:
-            b.draw(canvas)
+            if b.is_alive() and _vp.colliderect(b.rect):
+                b.draw(world_surf)
 
         # Enemy units hidden outside fog visibility
         visible = fog._visible
         for u in units:
             if u.team != 0 and _pos_to_grid(u.pos) not in visible:
                 continue
-            u.draw(canvas)
+            u.draw(world_surf)
 
         for p in projectiles:
-            p.draw(canvas)
+            p.draw(world_surf)
 
-        # Ghost building outline in build mode (drawn above units, below fog)
+        # ---- Blit visible portion of world_surf into game viewport (right of sidebar) ----
+        canvas.blit(world_surf, (SIDEBAR_W, 0),
+                    pygame.Rect(cam_ix, cam_iy, WIDTH - SIDEBAR_W, HEIGHT))
+
+        # Selected-building bracket — drawn over world_surf before fog.
+        # GoldMine uses its own yellow rect drawn in building.py, so skip it here.
+        if selected_building is not None and selected_building.is_alive() and not isinstance(selected_building, GoldMine):
+            r = selected_building.rect
+            bx = r.x - cam_ix + SIDEBAR_W
+            by = r.y - cam_iy
+            bw, bh = r.width, r.height
+            blen = max(6, min(bw, bh) // 3)
+            for (ox, oy), (dx, dy) in [
+                ((bx,      by),      (1,  1)),
+                ((bx + bw, by),      (-1,  1)),
+                ((bx,      by + bh), (1, -1)),
+                ((bx + bw, by + bh), (-1, -1)),
+            ]:
+                pygame.draw.line(canvas, (0, 230, 0), (ox, oy), (ox + dx * blen, oy), 2)
+                pygame.draw.line(canvas, (0, 230, 0), (ox, oy), (ox, oy + dy * blen), 2)
+
+        # Move-order click marker — shrinking ring that fades out
+        if _move_marker is not None:
+            mx, my, life = _move_marker
+            sx = int(mx - cam_ix + SIDEBAR_W)
+            sy = int(my - cam_iy)
+            ratio = life / 0.55
+            radius = max(2, int(4 + ratio * 14))
+            alpha  = int(220 * ratio)
+            _mm_surf = pygame.Surface((radius * 2 + 4, radius * 2 + 4), pygame.SRCALPHA)
+            pygame.draw.circle(_mm_surf, (0, 255, 60, alpha),
+                               (radius + 2, radius + 2), radius, 2)
+            canvas.blit(_mm_surf, (sx - radius - 2, sy - radius - 2))
+            _move_marker = (mx, my, max(0.0, life - dt))
+            if _move_marker[2] == 0.0:
+                _move_marker = None
+
+        # Ghost building outline in build mode (screen coords = world - camera)
         if build_mode:
             _GDIMS = {"farm": (Farm.W, Farm.H), "barracks": (Barracks.W, Barracks.H),
                       "lumbermill": (LumberMill.W, LumberMill.H),
@@ -1124,19 +1424,20 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
             bw, bh = _GDIMS.get(build_mode, (Farm.W, Farm.H))
             sx = (build_ghost[0] // CELL_SIZE) * CELL_SIZE
             sy = (build_ghost[1] // CELL_SIZE) * CELL_SIZE
-            ghost_rect = pygame.Rect(sx, sy, bw, bh)
+            ghost_rect_world = pygame.Rect(sx, sy, bw, bh)
+            ghost_rect_screen = pygame.Rect(sx - cam_ix + SIDEBAR_W, sy - cam_iy, bw, bh)
             cost_g, cost_l = BUILD_COSTS[build_mode]
-            can_place = (placement_valid(ghost_rect, buildings, game_map)
+            can_place = (placement_valid(ghost_rect_world, buildings, game_map)
                          and gold[0] >= cost_g and lumber[0] >= cost_l)
             fill_col = (0, 200, 0, 70) if can_place else (200, 40, 40, 70)
             line_col  = (0, 255, 0)    if can_place else (255, 60, 60)
             ghost_surf = pygame.Surface((bw, bh), pygame.SRCALPHA)
             ghost_surf.fill(fill_col)
-            canvas.blit(ghost_surf, ghost_rect)
-            pygame.draw.rect(canvas, line_col, ghost_rect, 2)
+            canvas.blit(ghost_surf, ghost_rect_screen)
+            pygame.draw.rect(canvas, line_col, ghost_rect_screen, 2)
 
         # Fog overlay — drawn BEFORE the drag box so the selection box is always visible
-        fog.draw(canvas)
+        fog.draw(canvas, cam_ix, cam_iy, viewport_x=SIDEBAR_W)
 
         # Drag selection box (drawn on top of fog so it's always readable)
         if drag_start is not None and drag_current is not None:
@@ -1152,11 +1453,14 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
                     canvas.blit(sel_surf, (rx, ry))
                     pygame.draw.rect(canvas, (0, 255, 0), (rx, ry, rw, rh), 1)
 
-        minimap.draw(canvas, buildings, units, dest_xy=(_MINI_SB_X, _MINI_SB_Y))
         draw_hud(canvas, font, gold, lumber, buildings, units, selected, selected_building,
                  ai.state, muted, fullscreen, build_mode=build_mode, difficulty=difficulty,
                  mouse_pos=to_game(pygame.mouse.get_pos()),
                  team_upgrades=upgrades[0])
+        # Draw minimap AFTER draw_hud so the sidebar fill doesn't overwrite it
+        _mm_bldgs = [b for b in buildings if not isinstance(b, Tree)]
+        minimap.draw(canvas, _mm_bldgs, units, dest_xy=(_MINI_SB_X, _MINI_SB_Y),
+                     cam=(cam_ix, cam_iy), viewport=(WIDTH - SIDEBAR_W, HEIGHT))
 
         if game_over is not None:
             draw_game_over(canvas, font, big_font, game_over, elapsed)
@@ -1180,8 +1484,10 @@ def main():
     big_font = pygame.font.Font(None, 96)
 
     difficulty = "normal"
+    next_seed  = DEFAULT_SEED
     while True:
-        restart, difficulty = run_game(screen, clock, font, big_font, difficulty=difficulty)
+        restart, difficulty, next_seed = run_game(
+            screen, clock, font, big_font, difficulty=difficulty, map_seed=next_seed)
         if not restart:
             break
 

@@ -2,6 +2,7 @@ import math
 import pygame
 from stats import UNIT_STATS
 from spritesheet import vel_to_dir, DIR_S
+from pathfinding import CELL_SIZE
 
 AGGRO_RANGE = 220.0    # idle units auto-attack enemies this close
 REPATH_INTERVAL = 0.5  # seconds between A* recalcs while chasing
@@ -17,7 +18,7 @@ class Unit:
         self.selected = False
         self.team = team
         self.image = image
-        self.rect = pygame.Rect(0, 0, 64, 64)
+        self.rect = pygame.Rect(0, 0, CELL_SIZE, CELL_SIZE)
         self.rect.center = (int(x), int(y))
 
         self._sheet = sheet
@@ -47,6 +48,12 @@ class Unit:
         self._shadow = pygame.Surface((_sw, _sh), pygame.SRCALPHA)
         pygame.draw.ellipse(self._shadow, (0, 0, 0, 60), self._shadow.get_rect())
         self._shadow_oy = int(22 * self._draw_scale)  # px below center → unit's feet
+        self._hit_flash = 0.0   # seconds of white-flash remaining after taking damage
+
+    @property
+    def cell(self) -> tuple[int, int]:
+        """Grid cell (col, row) this unit currently occupies — 1×1 tile footprint."""
+        return (int(self.pos.x) // CELL_SIZE, int(self.pos.y) // CELL_SIZE)
 
     # --- Orders ---
 
@@ -66,6 +73,7 @@ class Unit:
         self._attack_timer      = max(0.0, self._attack_timer      - dt)
         self._attack_anim_timer = max(0.0, self._attack_anim_timer - dt)
         self._repath_timer      = max(0.0, self._repath_timer      - dt)
+        self._hit_flash         = max(0.0, self._hit_flash         - dt)
 
         if self.attack_target is not None and not self.attack_target.is_alive():
             self.attack_target = None
@@ -136,6 +144,8 @@ class Unit:
             target_armor = getattr(self.attack_target, "armor", 0)
             dmg = max(1, self.attack_damage - target_armor)
             self.attack_target.hp -= dmg
+            if hasattr(self.attack_target, '_hit_flash'):
+                self.attack_target._hit_flash = 0.18
 
     _DIR_VEC = [
         (0, -1), (1, -1), (1, 0), (1, 1),
@@ -143,6 +153,9 @@ class Unit:
     ]
 
     def draw(self, surface: pygame.Surface) -> None:
+        if getattr(self, 'inside_building', False):
+            return   # hidden while physically inside a building
+
         cx, cy = self.rect.center
 
         # Drop shadow — drawn first so it appears beneath the sprite
@@ -163,23 +176,38 @@ class Unit:
                 frame = pygame.transform.scale(
                     frame, (int(fw * self._draw_scale), int(fh * self._draw_scale)))
             surface.blit(frame, frame.get_rect(center=(cx, cy)))
+            if self._hit_flash > 0:
+                flash = pygame.Surface(frame.get_size(), pygame.SRCALPHA)
+                flash.fill((255, 255, 255, int(180 * self._hit_flash / 0.18)))
+                surface.blit(flash, flash.get_rect(center=(cx, cy)))
         else:
             if self._draw_scale != 1.0:
                 iw, ih = self.image.get_size()
                 img = pygame.transform.scale(
                     self.image, (int(iw * self._draw_scale), int(ih * self._draw_scale)))
                 surface.blit(img, img.get_rect(center=(cx, cy)))
+                if self._hit_flash > 0:
+                    flash = pygame.Surface(img.get_size(), pygame.SRCALPHA)
+                    flash.fill((255, 255, 255, int(180 * self._hit_flash / 0.18)))
+                    surface.blit(flash, flash.get_rect(center=(cx, cy)))
             else:
                 surface.blit(self.image, self.rect)
+                if self._hit_flash > 0:
+                    flash = pygame.Surface(self.image.get_size(), pygame.SRCALPHA)
+                    flash.fill((255, 255, 255, int(180 * self._hit_flash / 0.18)))
+                    surface.blit(flash, self.rect)
 
         if self.selected:
-            # WC2-style corner-bracket selection indicator
-            vis  = int(58 * self._draw_scale) if self._sheet else int(56 * self._draw_scale)
-            pad  = 5
+            # WC2-style corner-bracket selection indicator.
+            # vis matches the visible character within the 64-px sprite frame (~44 px),
+            # not the frame itself, so brackets hug the sprite without spilling onto
+            # adjacent buildings.
+            vis  = int(44 * self._draw_scale) if self._sheet else int(30 * self._draw_scale)
+            pad  = 3
             bx   = cx - vis // 2 - pad
             by   = cy - vis // 2 - pad
             bw   = bh = vis + 2 * pad
-            blen = max(6, bw // 4)
+            blen = max(5, bw // 4)
             col  = (0, 230, 0)
             for ox, oy, dx, dy in (
                 (bx,      by,      1,  1),
@@ -189,31 +217,6 @@ class Unit:
             ):
                 pygame.draw.line(surface, col, (ox, oy), (ox + dx * blen, oy), 2)
                 pygame.draw.line(surface, col, (ox, oy), (ox, oy + dy * blen), 2)
-
-            # Direction pointer
-            if self._sheet is not None:
-                dvx, dvy = self._DIR_VEC[self._last_dir]
-                n   = math.sqrt(dvx * dvx + dvy * dvy)
-                tip = vis // 2 + pad - 1
-                pygame.draw.line(surface, (255, 220, 0),
-                                 (cx, cy),
-                                 (cx + int(dvx / n * tip), cy + int(dvy / n * tip)), 2)
-
-            # Waypoint dots
-            for i, wp in enumerate(self.path):
-                pygame.draw.circle(surface,
-                                   (255, 110, 0) if i == 0 else (180, 65, 0),
-                                   (int(wp.x), int(wp.y)), 3)
-
-            # Debug overlay: show dir index and frame index
-            if self._sheet is not None:
-                tick = int(self._anim_timer / self._ANIM_DIST_PER_FRAME) if self._moving else 0
-                walk_pose = (1 + tick % 4) if self._moving else 0
-                from spritesheet import STRIP_DIRS, VEL_TO_STRIP_DIR
-                fidx = walk_pose * STRIP_DIRS + VEL_TO_STRIP_DIR[self._last_dir % 8]
-                dbg_font = pygame.font.SysFont("monospace", 10)
-                dbg = dbg_font.render(f"d={self._last_dir} f={fidx}", True, (255, 255, 0))
-                surface.blit(dbg, (cx - dbg.get_width() // 2, cy - vis // 2 - pad - 12))
 
         self._draw_health_bar(surface)
 
@@ -233,7 +236,8 @@ class Unit:
         bar_w = int(48 * self._draw_scale) + 4   # ~52 footman, ~46 archer, ~38 worker
         bar_h = 4
         x = self.rect.centerx - bar_w // 2
-        y = self.rect.top - 8
+        # Anchor above the visible sprite character, not rect.top (rect is 1×1 cell).
+        y = self.rect.centery - int(30 * self._draw_scale) - 8
         ratio = max(0.0, self.hp / self.max_hp)
         color = (0, 200, 0) if ratio > 0.5 else (220, 180, 0) if ratio > 0.25 else (200, 30, 30)
         pygame.draw.rect(surface, (0, 0, 0), (x - 1, y - 1, bar_w + 2, bar_h + 2))
@@ -267,9 +271,9 @@ class Worker(Unit):
     _draw_scale: float = 0.72  # workers are visually smaller than combat units
     CARRY_CAP = 10
     HARVEST_TIME = 3.0
-    PROXIMITY = 80   # pixels from building edge (checked via rect inflation)
+    PROXIMITY = 20   # pixels from building edge (checked via rect inflation)
     LUMBER_CARRY_CAP = 25
-    CHOP_TIME = 3.0
+    CHOP_TIME = 5.0
 
     def __init__(self, x: float, y: float, image: pygame.Surface, team: int = 0, sheet=None):
         super().__init__(x, y, image, team, unit_type="worker", sheet=sheet)
@@ -282,8 +286,23 @@ class Worker(Unit):
         self._harvest_timer = 0.0
         self._tree = None
         self._lumber_carrying = 0
+        self._lumber_carry_cap = self.LUMBER_CARRY_CAP
         self._chop_timer = 0.0
         self._buildings_ref: list | None = None  # set by order_chop for auto-cycle
+
+    @property
+    def inside_building(self) -> bool:
+        """True while the worker is physically inside a building (harvesting)."""
+        return self._wstate == "harvesting"
+
+    def move_to(self, path: list[pygame.Vector2]) -> None:
+        """Cancel any active gather/chop cycle before issuing the move."""
+        if self._wstate == "harvesting" and self._mine:
+            self._mine.workers_inside = max(0, self._mine.workers_inside - 1)
+        self._wstate = "idle"
+        self._tree = None
+        self._mine = None
+        super().move_to(path)
 
     def order_harvest(self, mine, dropoff, game_map) -> None:
         self._mine = mine
@@ -325,6 +344,7 @@ class Worker(Unit):
                 self.path = []
                 self._wstate = "harvesting"
                 self._harvest_timer = self.HARVEST_TIME
+                self._mine.workers_inside += 1   # enter mine visually
 
         elif self._wstate == "harvesting":
             self._harvest_timer -= dt
@@ -332,6 +352,7 @@ class Worker(Unit):
                 amount = min(self.CARRY_CAP, self._mine.gold)
                 self._mine.gold -= amount
                 self._carrying = amount
+                self._mine.workers_inside = max(0, self._mine.workers_inside - 1)
                 self._wstate = "to_hall"
                 if self._dropoff:
                     self.path = game_map.find_path(self.pos, self._dropoff.pos)
@@ -354,6 +375,9 @@ class Worker(Unit):
                 self.path = []
                 self._wstate = "chopping"
                 self._chop_timer = self.CHOP_TIME
+                tree_dir = self._tree.pos - self.pos
+                if tree_dir.length_squared() > 0.01:
+                    self._last_dir = vel_to_dir(tree_dir)
 
         elif self._wstate == "chopping":
             if self._tree and self._tree.hp <= 0:
@@ -365,7 +389,7 @@ class Worker(Unit):
             else:
                 self._chop_timer -= dt
                 if self._chop_timer <= 0 and self._tree:
-                    amount = min(self.LUMBER_CARRY_CAP, self._tree.hp)
+                    amount = min(self._lumber_carry_cap, self._tree.hp)
                     self._tree.hp -= amount
                     self._lumber_carrying += amount
                     self._wstate = "to_hall_lumber"
@@ -393,6 +417,8 @@ class Worker(Unit):
         self._attack_timer      = max(0.0, self._attack_timer      - dt)
         self._attack_anim_timer = max(0.0, self._attack_anim_timer - dt)
         self._repath_timer      = max(0.0, self._repath_timer      - dt)
+        if self._wstate == "chopping" and self._attack_anim_timer == 0.0:
+            self._attack_anim_timer = 0.3  # keep axe-swing cycling while chopping
 
         if self.attack_target is not None:
             if not self.attack_target.is_alive():
@@ -416,3 +442,20 @@ class Worker(Unit):
 
         self._update_anim(self.pos - old_pos, dt)
         self.rect.center = (int(self.pos.x), int(self.pos.y))
+
+    def draw(self, surface: pygame.Surface) -> None:
+        super().draw(surface)
+        # Carry indicator: positioned 12px above the health bar anchor
+        cx = self.rect.centerx
+        cy = self.rect.centery - int(30 * self._draw_scale) - 20
+        if self._wstate == "to_hall" and self._carrying > 0:
+            # Gold bag — yellow circle with dark outline
+            pygame.draw.circle(surface, (255, 215, 0), (cx, cy), 7)
+            pygame.draw.circle(surface, (140, 110, 0), (cx, cy), 7, 1)
+        elif self._wstate == "to_hall_lumber" and self._lumber_carrying > 0:
+            # Lumber bundle — brown rectangle with a lighter highlight stripe
+            r = pygame.Rect(cx - 9, cy - 5, 18, 10)
+            pygame.draw.rect(surface, (130, 75, 20), r)
+            pygame.draw.line(surface, (170, 110, 50), (r.left + 2, r.centery - 2), (r.right - 3, r.centery - 2))
+            pygame.draw.line(surface, (170, 110, 50), (r.left + 2, r.centery + 1), (r.right - 3, r.centery + 1))
+            pygame.draw.rect(surface, (80, 45, 10), r, 1)
