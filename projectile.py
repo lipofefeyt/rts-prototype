@@ -21,6 +21,8 @@ class Projectile:
         if direction.length() <= step:
             if self.target.is_alive():
                 self.target.hp -= self.damage
+                if hasattr(self.target, '_hit_flash'):
+                    self.target._hit_flash = 0.18
             return False
         self.pos += direction.normalize() * step
         return True

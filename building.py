@@ -6,16 +6,59 @@ _BAR_W, _BAR_H = 80, 6
 
 # Populated by load_building_sprites() called from main after display is up.
 _SPRITES: dict[str, pygame.Surface] = {}
+# goldmine_all frames: index 0 = unlit, index 1 = lit (workers inside)
+_GOLDMINE_FRAMES: list[pygame.Surface] = []
+# Tree tile variants extracted from the forest atlas (32×32 each)
+_TREE_TILES: list[pygame.Surface] = []
+# Optional user-provided tree PNG (wins over atlas tiles and procedural sprite)
+_TREE_PNG: "pygame.Surface | None" = None
+# Full complete-tileset sheet for bitmask-based autotile selection
+_TREE_COMPLETE_SHEET: "pygame.Surface | None" = None
 
-_SPRITE_DIR = os.path.join(os.path.dirname(__file__), "assets", "sprites", "buildings")
+_SPRITE_DIR        = os.path.join(os.path.dirname(__file__), "assets", "sprites", "buildings")
+_TILE_DIR          = os.path.join(os.path.dirname(__file__), "assets", "sprites", "tiles")
+_COMPLETE_TILE_DIR = os.path.join(os.path.dirname(__file__), "assets", "sprites", "tiles_complete")
+_TILE_SIZE  = 32
+
+# Interior tree tile (row, col) coordinates in the 19-col complete tileset.
+# These are all fully-surrounded variants — right for a standalone Tree building.
+_COMPLETE_TREE_INTERIOR: tuple[tuple[int, int], ...] = (
+    (5, 13), (5, 16), (5, 17), (5, 18),
+    (6,  0), (6,  4), (6,  5), (6,  6),
+    (6, 11), (6, 13), (6, 14),
+    (7,  0), (7,  4), (7,  5), (7,  6), (7,  7), (7,  8),
+)
+_COMPLETE_TILE_COLS = 19  # forest/winter/wasteland sheet width
+
+# Autotile bitmask → (row, col) coordinates in the 19-col complete tileset.
+# N=1 E=2 S=4 W=8; missing bitmasks fall back to 15 (interior).
+_TREE_BITMASK_COORDS: dict[int, list[tuple[int, int]]] = {
+    1:  [(6,  9)],
+    3:  [(5,  7), (6, 16)],
+    4:  [(6,  7)],
+    5:  [(6,  8)],
+    6:  [(5,  9), (7,  3)],
+    7:  [(5,  8)],
+    9:  [(6, 15)],
+    11: [(5, 15), (6, 10), (6, 17)],
+    12: [(5, 12), (6, 18)],
+    13: [(5, 14)],
+    14: [(5, 11), (7,  1)],
+    15: [(5, 13), (5, 16), (5, 17), (5, 18),
+         (6,  0), (6,  4), (6,  5), (6,  6),
+         (6, 11), (6, 13), (6, 14),
+         (7,  0), (7,  4), (7,  5), (7,  6), (7,  7), (7,  8)],
+}
 
 
 def load_building_sprites() -> None:
     """Load WC2 building PNGs into the module cache. Call once after pygame display init."""
+    global _GOLDMINE_FRAMES, _TREE_TILES, _TREE_PNG, _TREE_COMPLETE_SHEET
     stems = ("townhall_team0", "townhall_team1",
              "barracks_team0", "barracks_team1",
              "farm_team0", "farm_team1",
-             "goldmine")
+             "lumbermill_team0", "lumbermill_team1",
+             "blacksmith_team0", "blacksmith_team1")
     for stem in stems:
         path = os.path.join(_SPRITE_DIR, f"{stem}.png")
         if os.path.exists(path):
@@ -23,8 +66,54 @@ def load_building_sprites() -> None:
                 _SPRITES[stem] = pygame.image.load(path).convert_alpha()
             except Exception as e:
                 print(f"building: warning: {path}: {e}")
-    if _SPRITES:
-        print(f"building: loaded {len(_SPRITES)} building sprites")
+
+    # Load goldmine_all.png as two separate frames (unlit=0, lit=1)
+    gm_path = os.path.join(_SPRITE_DIR, "goldmine_all.png")
+    if os.path.exists(gm_path):
+        try:
+            strip = pygame.image.load(gm_path).convert_alpha()
+            fw = strip.get_width() // 2
+            fh = strip.get_height()
+            _GOLDMINE_FRAMES.clear()
+            _GOLDMINE_FRAMES.extend([
+                strip.subsurface(pygame.Rect(0,  0, fw, fh)).copy(),
+                strip.subsurface(pygame.Rect(fw, 0, fw, fh)).copy(),
+            ])
+        except Exception as e:
+            print(f"building: warning: goldmine_all.png: {e}")
+
+    # Load interior tree tiles from the complete tileset (same source as the terrain autotiler).
+    complete_path = os.path.join(_COMPLETE_TILE_DIR, "forest.png")
+    if os.path.exists(complete_path):
+        try:
+            sheet = pygame.image.load(complete_path).convert()
+            _TREE_COMPLETE_SHEET = sheet
+            sw, sh = sheet.get_width(), sheet.get_height()
+            _TREE_TILES.clear()
+            for tr, tc in _COMPLETE_TREE_INTERIOR:
+                x, y = tc * _TILE_SIZE, tr * _TILE_SIZE
+                if x + _TILE_SIZE <= sw and y + _TILE_SIZE <= sh:
+                    _TREE_TILES.append(
+                        sheet.subsurface(pygame.Rect(x, y, _TILE_SIZE, _TILE_SIZE)).copy())
+        except Exception as e:
+            print(f"building: warning: complete tree tiles: {e}")
+
+    # Optional user-provided tree PNG (any size; scaled to 32×32).
+    # Place assets/sprites/buildings/tree.png to override the atlas tiles.
+    # Tip: crop a section of assets/sprites/tiles/forest_atlas.png as the source.
+    tree_path = os.path.join(_SPRITE_DIR, "tree.png")
+    if os.path.exists(tree_path):
+        try:
+            raw = pygame.image.load(tree_path).convert_alpha()
+            _TREE_PNG = pygame.transform.scale(raw, (Tree.W, Tree.H))
+        except Exception as e:
+            print(f"building: warning: tree.png: {e}")
+
+    total = len(_SPRITES) + (2 if _GOLDMINE_FRAMES else 0) + len(_TREE_TILES) + (1 if _TREE_PNG else 0)
+    if total:
+        print(f"building: loaded {len(_SPRITES)} building sprites, "
+              f"{len(_GOLDMINE_FRAMES)} goldmine frames, {len(_TREE_TILES)} tree tiles"
+              f"{', tree.png' if _TREE_PNG else ''}")
 
 
 class Building:
@@ -74,8 +163,7 @@ class Building:
 
     def draw(self, surface: pygame.Surface) -> None:
         pygame.draw.rect(surface, self.color, self.rect)
-        border = (255, 220, 0) if self.selected else tuple(min(255, c + 50) for c in self.color)
-        pygame.draw.rect(surface, border, self.rect, 2)
+        pygame.draw.rect(surface, tuple(min(255, c + 50) for c in self.color), self.rect, 2)
         self._draw_health_bar(surface)
         self._draw_construction_bar(surface)
 
@@ -109,10 +197,14 @@ class TownHall(Building):
         super().__init__(pygame.Rect(x, y, self.W, self.H), team, 1200, color)
         self.queue: list[tuple[str, float]] = []
 
-    def enqueue(self, gold: dict, unit_type: str = "worker") -> bool:
+    def enqueue(self, gold: dict, unit_type: str = "worker", all_buildings: list | None = None) -> bool:
         if len(self.queue) >= self.MAX_QUEUE:
             return False
         s = UNIT_STATS[unit_type]
+        if all_buildings and s.requires:
+            labels = {b.label for b in all_buildings if b.team == self.team and b.is_complete}
+            if not all(r in labels for r in s.requires):
+                return False
         if gold.get(self.team, 0) < s.cost:
             return False
         gold[self.team] -= s.cost
@@ -134,8 +226,6 @@ class TownHall(Building):
         stem = f"townhall_team{self.team}"
         if not self._blit_sprite(surface, stem):
             pygame.draw.rect(surface, self.color, self.rect)
-        if self.selected:
-            pygame.draw.rect(surface, (255, 220, 0), self.rect, 2)
         self._draw_health_bar(surface)
         self._draw_construction_bar(surface)
         if self.queue:
@@ -150,28 +240,29 @@ class TownHall(Building):
 
 class GoldMine(Building):
     label = "Gold Mine"
-    W, H = 96, 64   # sprite is 96×89; obstacle height reduced to 2 grid rows
+    W, H = 96, 96   # 3×3 grid tiles; sprite is 96×89 so it fits naturally
 
     def __init__(self, x: int, y: int, gold: int = 5000):
         super().__init__(pygame.Rect(x, y, self.W, self.H), -1, 9999, (190, 160, 0))
         self.gold = gold
+        self.workers_inside: int = 0   # incremented while a Worker is harvesting
 
     def draw(self, surface: pygame.Surface) -> None:
-        spr = _SPRITES.get("goldmine")
-        if spr:
-            # Anchor sprite to the rect top so the visual aligns with the
-            # pathfinding obstacle (sprite is taller than the 64 px rect).
-            dest = spr.get_rect(midtop=(self.rect.centerx, self.rect.top))
+        frames = _GOLDMINE_FRAMES
+        if frames:
+            # frame 0 = unlit (idle or exhausted), frame 1 = lit (workers inside)
             if self.gold <= 0:
-                dim = spr.copy()
-                dim.fill((80, 80, 80, 0), special_flags=pygame.BLEND_RGB_SUB)
-                surface.blit(dim, dest)
+                spr = frames[0].copy()
+                spr.fill((80, 80, 80, 0), special_flags=pygame.BLEND_RGB_SUB)
             else:
-                surface.blit(spr, dest)
+                spr = frames[1] if self.workers_inside > 0 else frames[0]
+            surface.blit(spr, spr.get_rect(center=self.rect.center))
         else:
             color = (120, 100, 60) if self.gold <= 0 else self.color
             pygame.draw.rect(surface, color, self.rect)
             pygame.draw.rect(surface, (240, 210, 40), self.rect, 3)
+        if self.selected:
+            pygame.draw.rect(surface, (255, 220, 0), self.rect, 2)
 
 
 class Barracks(Building):
@@ -188,10 +279,14 @@ class Barracks(Building):
         super().__init__(pygame.Rect(x, y, self.W, self.H), team, 800, color)
         self.queue: list[tuple[str, float]] = []  # (unit_type, seconds_remaining)
 
-    def enqueue(self, gold: dict, unit_type: str = "footman") -> bool:
+    def enqueue(self, gold: dict, unit_type: str = "footman", all_buildings: list | None = None) -> bool:
         if len(self.queue) >= self.MAX_QUEUE:
             return False
         s = UNIT_STATS[unit_type]
+        if all_buildings and s.requires:
+            labels = {b.label for b in all_buildings if b.team == self.team and b.is_complete}
+            if not all(r in labels for r in s.requires):
+                return False
         if gold.get(self.team, 0) < s.cost:
             return False
         gold[self.team] -= s.cost
@@ -213,8 +308,6 @@ class Barracks(Building):
         stem = f"barracks_team{self.team}"
         if not self._blit_sprite(surface, stem):
             pygame.draw.rect(surface, self.color, self.rect)
-        if self.selected:
-            pygame.draw.rect(surface, (255, 220, 0), self.rect, 2)
         self._draw_health_bar(surface)
         self._draw_construction_bar(surface)
         if self.is_complete and self.queue:
@@ -235,8 +328,10 @@ class Tree(Building):
 
     _SPRITE: "pygame.Surface | None" = None
 
-    def __init__(self, x: int, y: int):
+    def __init__(self, x: int, y: int, bitmask: int = 15):
         super().__init__(pygame.Rect(x, y, self.W, self.H), -1, self.LUMBER, (34, 85, 34))
+        self._bitmask = bitmask
+        self._cached_sprite: "pygame.Surface | None" = None
 
     @classmethod
     def _make_sprite(cls) -> pygame.Surface:
@@ -262,8 +357,36 @@ class Tree(Building):
         cls._SPRITE = s
         return s
 
+    def _pick_sprite(self) -> "pygame.Surface | None":
+        if _TREE_PNG is not None:
+            return _TREE_PNG
+        if _TREE_COMPLETE_SHEET is not None:
+            coords = _TREE_BITMASK_COORDS.get(self._bitmask) or _TREE_BITMASK_COORDS.get(15, [])
+            if coords:
+                h = (self.rect.x // _TILE_SIZE * 7 + self.rect.y // _TILE_SIZE * 13) % len(coords)
+                tr, tc = coords[h]
+                x, y = tc * _TILE_SIZE, tr * _TILE_SIZE
+                sw, sh = _TREE_COMPLETE_SHEET.get_size()
+                if x + _TILE_SIZE <= sw and y + _TILE_SIZE <= sh:
+                    return _TREE_COMPLETE_SHEET.subsurface(
+                        pygame.Rect(x, y, _TILE_SIZE, _TILE_SIZE)).copy()
+        if _TREE_TILES:
+            idx = (self.rect.x // _TILE_SIZE * 7 + self.rect.y // _TILE_SIZE * 13) % len(_TREE_TILES)
+            return _TREE_TILES[idx]
+        return None
+
     def draw(self, surface: pygame.Surface) -> None:
-        surface.blit(self._make_sprite(), self.rect)
+        if self._cached_sprite is None:
+            self._cached_sprite = self._pick_sprite()
+        spr = self._cached_sprite
+        if spr is not None:
+            if self.hp < self.max_hp:
+                spr = spr.copy()
+                spr.set_alpha(180)
+            surface.blit(spr, self.rect)
+        else:
+            surface.blit(self._make_sprite(), self.rect)
+        pygame.draw.rect(surface, (180, 220, 60), self.rect, 1)
         if self.hp < self.max_hp:
             ratio = self.hp / self.max_hp
             bx, by = self.rect.x + 2, self.rect.y - 6
@@ -285,15 +408,13 @@ class Farm(Building):
         stem = f"farm_team{self.team}"
         if not self._blit_sprite(surface, stem):
             pygame.draw.rect(surface, self.color, self.rect)
-        if self.selected:
-            pygame.draw.rect(surface, (255, 220, 0), self.rect, 2)
         self._draw_health_bar(surface)
         self._draw_construction_bar(surface)
 
 
 class Blacksmith(Building):
     label = "Blacksmith"
-    W, H = 128, 96
+    W, H = 96, 96
     build_time = 30.0
     _RESEARCH_IDS = ("weapons_1", "weapons_2", "armor_1", "armor_2")
 
@@ -331,12 +452,12 @@ class Blacksmith(Building):
         return done
 
     def draw(self, surface: pygame.Surface) -> None:
-        pygame.draw.rect(surface, self.color, self.rect)
-        cx, cy = self.rect.centerx, self.rect.centery
-        pygame.draw.rect(surface, (140, 130, 120), (cx - 18, cy - 8, 36, 14))
-        pygame.draw.rect(surface, (140, 130, 120), (cx - 10, cy + 6,  20, 8))
-        border = (255, 220, 0) if self.selected else (110, 100, 95)
-        pygame.draw.rect(surface, border, self.rect, 2)
+        stem = f"blacksmith_team{self.team}"
+        if not self._blit_sprite(surface, stem):
+            pygame.draw.rect(surface, self.color, self.rect)
+            cx, cy = self.rect.centerx, self.rect.centery
+            pygame.draw.rect(surface, (140, 130, 120), (cx - 18, cy - 8, 36, 14))
+            pygame.draw.rect(surface, (140, 130, 120), (cx - 10, cy + 6,  20, 8))
         self._draw_health_bar(surface)
         self._draw_construction_bar(surface)
         if self.is_complete and self.research_queue:
@@ -351,7 +472,7 @@ class Blacksmith(Building):
 
 class LumberMill(Building):
     label = "Lumber Mill"
-    W, H = 128, 96
+    W, H = 96, 96
     CARRY_BONUS = 25
     build_time = 25.0
     _RESEARCH_IDS = ("ranger",)
@@ -388,12 +509,12 @@ class LumberMill(Building):
         return done
 
     def draw(self, surface: pygame.Surface) -> None:
-        pygame.draw.rect(surface, self.color, self.rect)
-        cx, cy = self.rect.centerx, self.rect.centery
-        pygame.draw.line(surface, (200, 180, 140), (cx - 16, cy - 12), (cx + 16, cy + 12), 4)
-        pygame.draw.line(surface, (200, 180, 140), (cx + 16, cy - 12), (cx - 16, cy + 12), 4)
-        border = (255, 220, 0) if self.selected else (130, 100, 60)
-        pygame.draw.rect(surface, border, self.rect, 2)
+        stem = f"lumbermill_team{self.team}"
+        if not self._blit_sprite(surface, stem):
+            pygame.draw.rect(surface, self.color, self.rect)
+            cx, cy = self.rect.centerx, self.rect.centery
+            pygame.draw.line(surface, (200, 180, 140), (cx - 16, cy - 12), (cx + 16, cy + 12), 4)
+            pygame.draw.line(surface, (200, 180, 140), (cx + 16, cy - 12), (cx - 16, cy + 12), 4)
         self._draw_health_bar(surface)
         self._draw_construction_bar(surface)
         if self.is_complete and self.research_queue:

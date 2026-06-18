@@ -1,6 +1,6 @@
 import math
 import pygame
-from building import TownHall, Barracks, Farm, GoldMine, Blacksmith
+from building import TownHall, Barracks, Farm, GoldMine, Blacksmith, Tree
 from unit import Unit, Worker
 from stats import UNIT_STATS
 from pathfinding import CELL_SIZE
@@ -15,8 +15,10 @@ DIFFICULTY = {
 WORKER_REPLACE_COST   = UNIT_STATS["worker"].cost
 FARM_GOLD_COST        = 250
 BARRACKS_GOLD_COST    = 500
+BARRACKS_LUMBER_COST  = 200
 BLACKSMITH_GOLD_COST  = 800
 BUILD_CHECK_INTERVAL  = 8.0  # seconds between AI build evaluations
+LUMBER_LOW_THRESHOLD  = 250  # send a worker to chop when lumber falls below this
 
 
 class AIController:
@@ -27,11 +29,13 @@ class AIController:
 
     def __init__(self, team: int, buildings: list, units: list, gold: dict,
                  game_map, enemy_sprite: pygame.Surface, worker_sprite: pygame.Surface,
-                 sheets: dict | None = None, difficulty: str = "normal"):
+                 sheets: dict | None = None, difficulty: str = "normal",
+                 lumber: "dict | None" = None):
         self.team = team
         self.buildings = buildings   # shared reference — appends are visible in main
         self.units = units
         self.gold = gold
+        self.lumber = lumber or {}
         self.game_map = game_map
         self.enemy_sprite = enemy_sprite
         self.worker_sprite = worker_sprite
@@ -69,14 +73,23 @@ class AIController:
 
     def _tick_workers(self) -> None:
         mine = self._nearest_mine()
+        tree = self._nearest_tree()
         hall = self._hall()
-        if not mine or not hall:
+        if not hall:
             return
+
+        need_lumber = (self.lumber.get(self.team, 0) < LUMBER_LOW_THRESHOLD
+                       and tree is not None)
+        lumber_worker_sent = False
 
         workers = self._workers()
         for w in workers:
             if w._wstate == "idle":
-                w.order_harvest(mine, hall, self.game_map)
+                if need_lumber and not lumber_worker_sent:
+                    w.order_chop(tree, hall, self.game_map, self.buildings)
+                    lumber_worker_sent = True
+                elif mine:
+                    w.order_harvest(mine, hall, self.game_map)
 
         # Replace a lost worker if the AI can afford it
         if not workers and self.gold[self.team] >= WORKER_REPLACE_COST:
@@ -158,14 +171,17 @@ class AIController:
                 self.game_map.add_obstacle(f.rect)
                 self.gold[self.team] -= FARM_GOLD_COST
 
-        if not self._barracks() and self.gold[self.team] >= BARRACKS_GOLD_COST:
+        if (not self._barracks()
+                and self.gold[self.team] >= BARRACKS_GOLD_COST
+                and self.lumber.get(self.team, 0) >= BARRACKS_LUMBER_COST):
             rect = self._find_placement(Barracks)
             if rect:
                 b = Barracks(rect.x, rect.y, team=self.team)
                 b.start_construction()
                 self.buildings.append(b)
                 self.game_map.add_obstacle(b.rect)
-                self.gold[self.team] -= BARRACKS_GOLD_COST
+                self.gold[self.team]   -= BARRACKS_GOLD_COST
+                self.lumber[self.team] -= BARRACKS_LUMBER_COST
 
         if (self._barracks() and not self._blacksmith()
                 and self.gold[self.team] >= BLACKSMITH_GOLD_COST):
@@ -205,8 +221,7 @@ class AIController:
             for r in range(row0, row1):
                 if (c, r) in self.game_map.blocked:
                     return False
-        pad = rect.inflate(8, 8)
-        return not any(pad.colliderect(b.rect) for b in self.buildings)
+        return not any(rect.colliderect(b.rect) for b in self.buildings)
 
     # --- Helpers ---
 
@@ -235,3 +250,10 @@ class AIController:
         if not hall or not mines:
             return None
         return min(mines, key=lambda m: (m.pos - hall.pos).length())
+
+    def _nearest_tree(self):
+        hall = self._hall()
+        trees = [b for b in self.buildings if isinstance(b, Tree) and b.hp > 0]
+        if not hall or not trees:
+            return None
+        return min(trees, key=lambda t: (t.pos - hall.pos).length())

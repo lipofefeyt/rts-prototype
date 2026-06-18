@@ -49,5 +49,6 @@ class FogOfWar:
     def is_visible(self, grid_cell: tuple[int, int]) -> bool:
         return grid_cell in self._visible
 
-    def draw(self, surface: pygame.Surface) -> None:
-        surface.blit(self._surface, (0, 0))
+    def draw(self, surface: pygame.Surface, cam_x: int = 0, cam_y: int = 0,
+             viewport_x: int = 0) -> None:
+        surface.blit(self._surface, (viewport_x - cam_x, -cam_y))

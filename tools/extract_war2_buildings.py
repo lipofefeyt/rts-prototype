@@ -63,13 +63,17 @@ TilesetCB = ctypes.CFUNCTYPE(
 # Human and orc buildings have separate unit IDs.
 # Gold Mine has no meaningful player color; use 0.
 BUILDINGS = [
-    ("townhall_team0",  0x4a, 0),   # Human Town Hall
-    ("townhall_team1",  0x4b, 1),   # Orc Great Hall
-    ("barracks_team0",  0x3c, 0),   # Human Barracks
-    ("barracks_team1",  0x3d, 1),   # Orc Barracks
-    ("farm_team0",      0x3a, 0),   # Human Farm
-    ("farm_team1",      0x3b, 1),   # Orc Pig Farm
-    ("goldmine",        0x5c, 0),   # Gold Mine
+    ("townhall_team0",    0x4a, 0),   # Human Town Hall
+    ("townhall_team1",    0x4b, 1),   # Orc Great Hall
+    ("barracks_team0",    0x3c, 0),   # Human Barracks
+    ("barracks_team1",    0x3d, 1),   # Orc Barracks
+    ("farm_team0",        0x3a, 0),   # Human Farm
+    ("farm_team1",        0x3b, 1),   # Orc Pig Farm
+    ("lumbermill_team0",  0x4c, 0),   # Elven Lumber Mill
+    ("lumbermill_team1",  0x4d, 1),   # Troll Lumber Mill
+    ("blacksmith_team0",  0x52, 0),   # Human Blacksmith
+    ("blacksmith_team1",  0x53, 1),   # Orc Blacksmith
+    ("goldmine",          0x5c, 0),   # Gold Mine
 ]
 
 

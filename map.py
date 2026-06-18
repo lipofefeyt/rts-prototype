@@ -23,14 +23,77 @@ _TILE_VARIANTS: dict[str, list[int]] = {
     'W_deep': [256, 257, 272, 273, 288, 289, 290, 304, 305, 320, 321, 322,
                336, 337, 352, 353, 368, 369, 384, 385, 400, 401, 402],
     'D':      [48, 49, 50, 52, 53, 54, 55, 56],
-    'T':      [96, 97, 98, 100, 101, 102, 103, 104, 105, 106, 107, 108,
-               109, 110, 111, 112, 113, 114],
+    'T':      [112, 113, 114],
 }
 # Legacy alias so external code that reads TILE_VARIANTS['W'] still works.
 _TILE_VARIANTS['W'] = _TILE_VARIANTS['W_edge']
 _ATLAS_COLS  = 32
 _TILE_DIR    = os.path.join(os.path.dirname(__file__), "assets", "sprites", "tiles")
+_COMPLETE_TILE_DIR = os.path.join(os.path.dirname(__file__), "assets", "sprites", "tiles_complete")
 VALID_ERAS   = ("forest", "winter", "wasteland", "swamp")
+
+# Column count of each era's complete tileset sheet (rows are always 20).
+_ERA_TILE_COLS: dict[str, int] = {
+    "forest": 19, "winter": 19, "wasteland": 19, "swamp": 20,
+}
+
+# Tree autotile bitmask → list of (row, col) tile coordinates in the complete sheet.
+# Bitmask bits: N=1  E=2  S=4  W=8  (1 = that cardinal neighbour is also a tree).
+# Multiple coords per bitmask are visual variants picked deterministically from position.
+# Fallback for unknown bitmasks (0, 2, 8, 10) uses interior tiles (bitmask 15).
+_TREE_BITMASK_COORDS: dict[int, list[tuple[int, int]]] = {
+    1:  [(6,  9)],                                              # N only
+    3:  [(5,  7), (6, 16)],                                     # N+E  (terrain S+W)
+    4:  [(6,  7)],                                              # S only
+    5:  [(6,  8)],                                              # N+S  vertical strip
+    6:  [(5,  9), (7,  3)],                                     # E+S  (terrain N+W)
+    7:  [(5,  8)],                                              # N+E+S (terrain W)
+    9:  [(6, 15)],                                              # N+W  (terrain S+E)
+    11: [(5, 15), (6, 10), (6, 17)],                           # N+E+W (terrain S)
+    12: [(5, 12), (6, 18)],                                     # S+W  (terrain N+E)
+    13: [(5, 14)],                                              # N+S+W (terrain E)
+    14: [(5, 11), (7,  1)],                                     # E+S+W (terrain N)
+    15: [(5, 13), (5, 16), (5, 17), (5, 18),                   # fully interior
+         (6,  0), (6,  4), (6,  5), (6,  6),
+         (6, 11), (6, 13), (6, 14),
+         (7,  0), (7,  4), (7,  5), (7,  6), (7,  7), (7,  8)],
+}
+
+
+def _load_complete_tree_tiles(era: str) -> "dict[int, list[pygame.Surface]]":
+    """Load bitmask→surface lists from tiles_complete/<era>.png. Returns {} if absent."""
+    path = os.path.join(_COMPLETE_TILE_DIR, f"{era}.png")
+    if not os.path.exists(path):
+        return {}
+    try:
+        sheet = pygame.image.load(path).convert()
+    except Exception as e:
+        print(f"map: warning: complete tileset {era}: {e}")
+        return {}
+
+    cols  = _ERA_TILE_COLS.get(era, 19)
+    sw, sh = sheet.get_width(), sheet.get_height()
+
+    def _tile(r: int, c: int) -> "pygame.Surface | None":
+        x, y = c * CELL_SIZE, r * CELL_SIZE
+        if x + CELL_SIZE <= sw and y + CELL_SIZE <= sh:
+            return sheet.subsurface(pygame.Rect(x, y, CELL_SIZE, CELL_SIZE)).copy()
+        return None
+
+    interior = [s for r, c in _TREE_BITMASK_COORDS[15] if (s := _tile(r, c))]
+    result: dict[int, list[pygame.Surface]] = {}
+    for bitmask, coords in _TREE_BITMASK_COORDS.items():
+        surfs = [s for r, c in coords if (s := _tile(r, c))]
+        result[bitmask] = surfs if surfs else interior  # fall back to interior
+    # Missing bitmasks (0, 2, 8, 10) → interior
+    for missing in (0, 2, 8, 10):
+        if missing not in result:
+            result[missing] = interior
+
+    if result:
+        print(f"map: complete tree tiles for {era} ({len(result)} bitmasks, "
+              f"sheet {cols}×{sh // CELL_SIZE})")
+    return result
 
 
 def _load_tile_variants(era: str = "forest") -> dict[str, list[pygame.Surface]]:
@@ -59,39 +122,40 @@ def _load_tile_variants(era: str = "forest") -> dict[str, list[pygame.Surface]]:
     return result
 
 # 40 cols × 22 rows at 32 px/cell = 1280×704.
-# River runs through cols 16-21.  Two dirt fords at rows 3-4 (upper) and 13-14 (lower).
-# Tree borders on rows 0-1 and 20-21 only (safe: no buildings in those rows).
+# River enters from col 17 at top, dips left to col 15 in the middle, returns to col 17
+# at the bottom — a gentle S-curve.  Two diagonal ford crossings at rows 4-5 and 15-16.
+# Tree borders (T) are 1-2 cells thick at the edges; buildings are in cols 9-15 (player)
+# and 31-38 (enemy), so the river stays safely in cols 15-24 throughout.
 DEFAULT_MAP = [
-    "TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT",  #  0 top tree border
-    "TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT",  #  1 top tree border
-    "GGGGGGGGGGGGGGGGWWWWWWGGGGGGGGGGGGGGGGGG",  #  2
-    "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",  #  3 upper ford
-    "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",  #  4 upper ford
-    "GGGGGGGGGGGGGGGGWWWWWWGGGGGGGGGGGGGGGGGG",  #  5
-    "GGGGGGGGGGGGGGGGWWWWWWGGGGGGGGGGGGGGGGGG",  #  6
-    "GGGGGGGGGGGGGGGGWWWWWWGGGGGGGGGGGGGGGGGG",  #  7
-    "GGGGGGGGGGGGGGGGWWWWWWGGGGGGGGGGGGGGGGGG",  #  8
-    "GGGGGGGGGGGGGGGGWWWWWWGGGGGGGGGGGGGGGGGG",  #  9
-    "GGGGGGGGGGGGGGGGWWWWWWGGGGGGGGGGGGGGGGGG",  # 10
-    "GGGGGGGGGGGGGGGGWWWWWWGGGGGGGGGGGGGGGGGG",  # 11
-    "GGGGGGGGGGGGGGGGWWWWWWGGGGGGGGGGGGGGGGGG",  # 12
-    "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",  # 13 lower ford
-    "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",  # 14 lower ford
-    "GGGGGGGGGGGGGGGGWWWWWWGGGGGGGGGGGGGGGGGG",  # 15
-    "GGGGGGGGGGGGGGGGWWWWWWGGGGGGGGGGGGGGGGGG",  # 16
-    "GGGGGGGGGGGGGGGGWWWWWWGGGGGGGGGGGGGGGGGG",  # 17
-    "GGGGGGGGGGGGGGGGWWWWWWGGGGGGGGGGGGGGGGGG",  # 18
-    "GGGGGGGGGGGGGGGGWWWWWWGGGGGGGGGGGGGGGGGG",  # 19
-    "TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT",  # 20 bottom tree border
-    "TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT",  # 21 bottom tree border
+    "T" * 40,                                    #  0  top border
+    "T" * 40,                                    #  1  top border
+    "TT" + "G"*15 + "W"*8 + "G"*13 + "TT",     #  2  river cols 17-24  (wider near top)
+    "TT" + "G"*15 + "W"*8 + "G"*14 + "T",      #  3  river cols 17-24  (1T right: enemy mine col 38 safe)
+    "T"  + "G"*13 + "D"*13 + "G"*12 + "T",     #  4  upper ford cols 14-26
+    "G"*13 + "D"*14 + "G"*13,                   #  5  upper ford cols 13-26  (no border: open crossing)
+    "TT" + "G"*14 + "W"*8 + "G"*14 + "TT",     #  6  river cols 16-23  (post-ford shift left)
+    "TT" + "G"*13 + "W"*8 + "G"*15 + "TT",     #  7  river cols 15-22
+    "T"  + "G"*14 + "W"*7 + "G"*17 + "T",      #  8  river cols 15-21  (narrows, stable zone)
+    "T"  + "G"*14 + "W"*7 + "G"*17 + "T",      #  9  river cols 15-21
+    "T"  + "G"*14 + "W"*7 + "G"*17 + "T",      # 10  river cols 15-21  (footman spawns col 13-14 = G)
+    "T"  + "G"*14 + "W"*7 + "G"*17 + "T",      # 11  river cols 15-21  (enemy worker spawn col 37 = G)
+    "TT" + "G"*14 + "W"*6 + "G"*17 + "T",      # 12  river cols 16-21  (farm1 col 15 = G; 1T right)
+    "TT" + "G"*14 + "W"*6 + "G"*17 + "T",      # 13  river cols 16-21
+    "T"  + "G"*14 + "W"*7 + "G"*17 + "T",      # 14  river cols 15-21
+    "T"  + "G"*12 + "D"*14 + "G"*12 + "T",     # 15  lower ford cols 13-26
+    "T"  + "G"*13 + "D"*13 + "G"*12 + "T",     # 16  lower ford cols 14-26  (diagonal offset)
+    "TT" + "G"*13 + "W"*8 + "G"*15 + "TT",     # 17  river cols 15-22  (post-ford widens)
+    "TT" + "G"*14 + "W"*8 + "G"*14 + "TT",     # 18  river cols 16-23  (shifting right)
+    "TT" + "G"*15 + "W"*8 + "G"*13 + "TT",     # 19  river cols 17-24  (symmetric to top)
+    "T" * 40,                                    # 20  bottom border
+    "T" * 40,                                    # 21  bottom border
 ]
 
 
 class GameMap:
-    def __init__(self, width: int, height: int, tile_map: list[str] = DEFAULT_MAP,
-                 era: str = "forest"):
-        self.grid_w = width // CELL_SIZE
-        self.grid_h = height // CELL_SIZE
+    def __init__(self, tile_map: list[str] = DEFAULT_MAP, era: str = "forest"):
+        self.grid_h = len(tile_map)
+        self.grid_w = max(len(row) for row in tile_map) if tile_map else 40
         self.tiles = tile_map
         self.blocked: set[tuple[int, int]] = set()
 
@@ -110,12 +174,15 @@ class GameMap:
         self._era = era
         TILE_COLORS = _ERA_TILE_COLORS.get(era, _ERA_TILE_COLORS["forest"])
         tile_variants = _load_tile_variants(era)
+        tree_tiles    = _load_complete_tree_tiles(era)
         self._surface.fill((0, 0, 0))
         for r, row in enumerate(self.tiles):
             for c, t in enumerate(row):
                 x, y = c * CELL_SIZE, r * CELL_SIZE
                 if t == 'W':
                     self._blit_water(c, r, x, y, tile_variants)
+                elif t == 'T':
+                    self._blit_tree(c, r, x, y, tree_tiles)
                 else:
                     variants = tile_variants.get(t)
                     if variants:
@@ -124,6 +191,36 @@ class GameMap:
                     else:
                         color = TILE_COLORS.get(t, TILE_COLORS['G'])
                         pygame.draw.rect(self._surface, color, (x, y, CELL_SIZE, CELL_SIZE))
+
+    def _blit_tree(self, c: int, r: int, x: int, y: int,
+                   tree_tiles: "dict[int, list[pygame.Surface]]") -> None:
+        """Autotile a tree cell based on its four cardinal neighbours."""
+        if not tree_tiles:
+            pygame.draw.rect(self._surface, TILE_COLORS.get('T', (24, 60, 8)),
+                             (x, y, CELL_SIZE, CELL_SIZE))
+            return
+
+        def is_tree(dr: int, dc: int) -> bool:
+            nr, nc = r + dr, c + dc
+            # Off-map → treat as tree so the forest border looks interior
+            if not (0 <= nr < self.grid_h and 0 <= nc < self.grid_w):
+                return True
+            return self.tiles[nr][nc] == 'T'
+
+        bitmask = (
+            (1 if is_tree(-1,  0) else 0) |   # N
+            (2 if is_tree( 0,  1) else 0) |   # E
+            (4 if is_tree( 1,  0) else 0) |   # S
+            (8 if is_tree( 0, -1) else 0)     # W
+        )
+
+        variants = tree_tiles.get(bitmask) or tree_tiles.get(15, [])
+        if variants:
+            idx = (c * 7 + r * 13) % len(variants)
+            self._surface.blit(variants[idx], (x, y))
+        else:
+            pygame.draw.rect(self._surface, TILE_COLORS.get('T', (24, 60, 8)),
+                             (x, y, CELL_SIZE, CELL_SIZE))
 
     def _blit_water(self, c: int, r: int, x: int, y: int,
                     tile_variants: dict) -> None:
@@ -227,12 +324,15 @@ class GameMap:
                 queue.append(nb)
         return None
 
-    def find_path(self, start_pos: pygame.Vector2, goal_pos: pygame.Vector2) -> list[pygame.Vector2]:
+    def find_path(self, start_pos: pygame.Vector2, goal_pos: pygame.Vector2,
+                  extra_blocked: "set | None" = None) -> list[pygame.Vector2]:
         start = world_to_grid(start_pos, self.grid_w, self.grid_h)
         goal  = world_to_grid(goal_pos,  self.grid_w, self.grid_h)
 
+        blocked = self.blocked if not extra_blocked else (self.blocked | extra_blocked)
+
         # Redirect to nearest walkable cell when goal is inside a building / terrain
-        if goal in self.blocked:
+        if goal in blocked:
             near = self._nearest_accessible(goal)
             if near is None:
                 return []
@@ -241,12 +341,126 @@ class GameMap:
 
         if start == goal:
             return [pygame.Vector2(goal_pos)]
-        cells = astar(self.blocked, start, goal, self.grid_w, self.grid_h)
+        cells = astar(blocked, start, goal, self.grid_w, self.grid_h)
         if not cells:
             return []
         path = [grid_to_world_center(c, r) for c, r in cells]
         path[-1] = pygame.Vector2(goal_pos)
         return path
 
-    def draw(self, surface: pygame.Surface) -> None:
-        surface.blit(self._surface, (0, 0))
+    def draw(self, surface: pygame.Surface, cam_x: int = 0, cam_y: int = 0) -> None:
+        surface.blit(self._surface, (-cam_x, -cam_y))
+
+
+# ---------------------------------------------------------------------------
+# Procedural map generation
+# ---------------------------------------------------------------------------
+
+import random as _rng_module
+
+
+def generate_map(cols: int = 64, rows: int = 64,
+                 seed: "int | None" = None) -> list[str]:
+    """
+    Generate a WC2-style map with a vertical S-curve river, two dirt fords,
+    tree patches at corners and mid-edges, and guaranteed clear base areas
+    on the left (player) and right (enemy) sides.
+    """
+    rng = _rng_module.Random(seed)
+    grid = [['G'] * cols for _ in range(rows)]
+
+    # ── Tree border (2 cells thick) ──────────────────────────────────────
+    for r in range(rows):
+        for c in range(cols):
+            if r < 2 or r >= rows - 2 or c < 2 or c >= cols - 2:
+                grid[r][c] = 'T'
+
+    # ── River: vertical S-curve ───────────────────────────────────────────
+    river_center = cols // 2 + rng.randint(-cols // 10, cols // 10)
+    river_hw = rng.randint(3, 5)   # half-width
+
+    ford_y1 = rng.randint(rows // 5, rows // 3)
+    ford_y2 = rng.randint(2 * rows // 3, 4 * rows // 5)
+    ford_rows: set[int] = set(range(ford_y1 - 1, ford_y1 + 3)) | \
+                          set(range(ford_y2 - 1, ford_y2 + 3))
+
+    col = river_center
+    for r in range(2, rows - 2):
+        col += rng.choice([-1, -1, 0, 0, 0, 1, 1])
+        col = max(river_hw + cols // 5, min(cols - river_hw - cols // 5, col))
+        tile = 'D' if r in ford_rows else 'W'
+        for dc in range(-river_hw, river_hw + 1):
+            c = col + dc
+            if 2 <= c < cols - 2:
+                grid[r][c] = tile
+
+    # ── Base zones ────────────────────────────────────────────────────────
+    # Player: left quarter; Enemy: right quarter; both in vertical middle half
+    player_c = range(2, cols // 4)
+    enemy_c  = range(3 * cols // 4, cols - 2)
+    base_r   = range(rows // 4, 3 * rows // 4)
+
+    def _is_base(r: int, c: int) -> bool:
+        return (r in base_r) and (c in player_c or c in enemy_c)
+
+    # ── Tree density fill ─────────────────────────────────────────────────
+    # Three zones determine density:
+    #   • Top strip (rows 2 .. rows//4)         : 78%  → dense forest flanking bases
+    #   • Bottom strip (3*rows//4 .. rows-2)    : 78%
+    #   • No-man's-land (base rows, between bases): 50% → medium forest with openings
+    #   • Base wing cells                       :  0%  → cleared below by _is_base
+    def _density(r: int, c: int) -> float:
+        if r < rows // 4 or r >= 3 * rows // 4:
+            return 0.78
+        if cols // 4 <= c < 3 * cols // 4:
+            return 0.50
+        return 0.0  # player/enemy side of base band — kept open
+
+    for r in range(2, rows - 2):
+        for c in range(2, cols - 2):
+            if _is_base(r, c) or grid[r][c] in ('W', 'D'):
+                continue
+            d = _density(r, c)
+            if d > 0 and rng.random() < d:
+                grid[r][c] = 'T'
+
+    # ── Force clear base zones (override any trees placed above) ──────────
+    for r in range(rows):
+        for c in range(cols):
+            if _is_base(r, c):
+                grid[r][c] = 'G'
+
+    return [''.join(row) for row in grid]
+
+
+def find_base_area(tile_map: list[str], side: str = 'left',
+                   min_clear: int = 10) -> tuple[int, int]:
+    """
+    Return the (col, row) grid position of the most passable min_clear×min_clear
+    area on the requested side of the map.
+    """
+    rows = len(tile_map)
+    cols = max(len(r) for r in tile_map) if tile_map else 0
+
+    if side == 'left':
+        c_range = range(2, cols // 3 - min_clear + 1)
+    else:
+        c_range = range(2 * cols // 3, cols - min_clear - 2)
+    r_range = range(rows // 4, 3 * rows // 4 - min_clear + 1)
+
+    best_score = -1
+    best = (2, rows // 4) if side == 'left' else (2 * cols // 3, rows // 4)
+
+    for r0 in r_range:
+        for c0 in c_range:
+            score = sum(
+                1
+                for dr in range(min_clear) for dc in range(min_clear)
+                if (r0 + dr < rows and c0 + dc < cols
+                    and tile_map[r0 + dr][c0 + dc] == 'G')
+            )
+            if score > best_score:
+                best_score = score
+                best = (c0, r0)
+
+    return best

@@ -124,7 +124,7 @@ def extract_unit(libwar2, w2_handle, unit_name: str, unit_id: int,
         frames.append({"id": int(frame_id), "w": int(w), "h": int(h), "rgba": bytes(buf)})
 
     cb = SpriteCB(on_sprite)
-    libwar2.war2_sprites_decode(w2_handle, unit_id, player_id, PUD_ERA_FOREST, cb, None)
+    libwar2.war2_sprites_decode(w2_handle, player_id, PUD_ERA_FOREST, unit_id, cb, None)
     return frames
 
 # ---------------------------------------------------------------------------
