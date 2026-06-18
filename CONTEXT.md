@@ -1,173 +1,98 @@
-# RTS Prototype — Project Context for Claude Code
+# RTS Prototype — Project Context
 
 ## Project Overview
-Building a minimal Warcraft 2-inspired RTS prototype as a learning project.
-Primary goal: learn game dev fundamentals. Not aiming to ship.
+Warcraft 2-inspired RTS prototype, built as a learning project. Not aiming to ship.
+Primary goal: game dev fundamentals, asset pipelines, AI state machines.
 
 ## Developer Profile
 - Strong C++ / Python / systems programming background
 - Hobby pace (a few hours/week)
-- Setup: Windows + WSL2 + VSCode + Docker
-- Claude Code integrated in VSCode/WSL2
+- Setup: Windows + WSL2 + VSCode, Claude Code integrated
+- New to pygame at project start
 
-## Stack Decision
-- **Engine: Pygame** (pure Python, runs natively in WSL2, no editor friction)
-- Godot 4 was trialed but abandoned due to editor friction
-- All code lives in WSL2, edited in VSCode
+## Stack
+- **Engine:** Pygame 2.6.1, Python 3.12, running natively in WSL2
+- Godot 4 was trialed and abandoned (editor friction in WSL2)
 
-## Project Structure
-```
-rts-prototype/
-├── main.py          # game loop, input handling, spawning
-├── unit.py          # Unit class
-└── assets/
-    └── footman.png  # 128x128 sprite (or fallback to blue rect)
-```
+## Current State (Session ~9)
 
-## Current State (end of Session 1)
-- `Unit` class with position, target, speed, selected state
-- Straight-line click-to-move (no pathfinding yet)
-- Left-click to select a unit (green circle indicator)
-- Right-click to move selected unit
-- 3 units spawned at startup
-- Delta-time based movement (frame-rate independent)
+### Gameplay
+- Two-base skirmish: Human (blue/team 0) vs Orc AI (red/team 1)
+- Procedural map (seed 4874 locked): grass, dirt, water, forests, two gold mines
+- Four tilesets (Forest, Winter, Wasteland, Swamp) — Forest active by default
+- Fog of war per team
+- Win/lose: destroy enemy Town Hall
 
-## Current `unit.py`
-```python
-import pygame
+### Units implemented
+| Unit | Tier | Notes |
+|------|------|-------|
+| Worker / Peasant | — | Harvests gold + lumber, carries back to hall |
+| Footman | 1 | Melee |
+| Archer | 1 | Ranged |
+| Knight | 2 | Requires Blacksmith |
 
-class Unit:
-    def __init__(self, x: float, y: float, image: pygame.Surface):
-        self.pos = pygame.Vector2(x, y)
-        self.target = pygame.Vector2(x, y)
-        self.speed = 150.0  # pixels per second
-        self.selected = False
-        self.image = image
-        self.rect = self.image.get_rect(center=(int(self.pos.x), int(self.pos.y)))
+### Buildings implemented
+| Building | Notes |
+|----------|-------|
+| Town Hall / Great Hall | Trains workers |
+| Barracks | Trains footmen, archers, knights |
+| Farm / Pig Farm | +4 food cap each |
+| Lumber Mill | Required for Blacksmith |
+| Blacksmith | Enables Knight training |
+| Gold Mine | Depletes; worker harvests 100g/trip |
+| Trees | Harvested for lumber (10 lumber/chop) |
 
-    def move_to(self, pos: pygame.Vector2):
-        self.target = pygame.Vector2(pos)
+### AI
+- State machine: gather → attack → gather
+- Harvests gold and lumber
+- Trains mixed army (footman/archer/knight rotation)
+- Builds Farms when food-capped, rebuilds Barracks/Blacksmith when missing
+- Difficulty presets: easy / normal / hard
 
-    def update(self, dt: float):
-        direction = self.target - self.pos
-        if direction.length() > 5:
-            self.pos += direction.normalize() * self.speed * dt
-        self.rect.center = (int(self.pos.x), int(self.pos.y))
+### Sprites
+- WC2 sprites extracted from MAINDAT.WAR via war2tools/libwar2 (ctypes bridge)
+- Unit strips: pose-major layout, 5 stored dirs, SW/W/NW mirrored
+- Team colour via per-team palette swap at extraction time
+- Building sprites: human and orc variants, summer + seasonal tilesets
+- Thumbnails: 190 WC2 UI icons in `assets/sprites/thumbnails/thumbnails.png`
+  (catalog at `assets/sprites/thumbnails/catalog.md`)
 
-    def draw(self, surface: pygame.Surface):
-        surface.blit(self.image, self.rect)
-        if self.selected:
-            pygame.draw.circle(surface, (0, 255, 0), self.rect.center, 70, 2)
-
-    def contains_point(self, point: tuple) -> bool:
-        return self.rect.collidepoint(point)
-```
-
-## Current `main.py`
-```python
-import pygame
-from unit import Unit
-
-WIDTH, HEIGHT = 1280, 720
-FPS = 60
-
-def main():
-    pygame.init()
-    screen = pygame.display.set_mode((WIDTH, HEIGHT))
-    pygame.display.set_caption("RTS Prototype")
-    clock = pygame.time.Clock()
-
-    try:
-        raw = pygame.image.load("assets/footman.png").convert_alpha()
-        sprite = pygame.transform.scale(raw, (128, 128))
-    except FileNotFoundError:
-        sprite = pygame.Surface((128, 128), pygame.SRCALPHA)
-        sprite.fill((70, 130, 180))
-
-    units = [
-        Unit(300, 300, sprite),
-        Unit(450, 300, sprite),
-        Unit(600, 300, sprite),
-    ]
-
-    selected_unit = None
-
-    while True:
-        dt = clock.tick(FPS) / 1000.0
-
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                return
-
-            if event.type == pygame.MOUSEBUTTONDOWN:
-                if event.button == 1:
-                    if selected_unit:
-                        selected_unit.selected = False
-                        selected_unit = None
-                    for unit in units:
-                        if unit.contains_point(event.pos):
-                            selected_unit = unit
-                            unit.selected = True
-                            break
-
-                elif event.button == 3:
-                    if selected_unit:
-                        selected_unit.move_to(event.pos)
-
-        for unit in units:
-            unit.update(dt)
-
-        screen.fill((30, 30, 30))
-        for unit in units:
-            unit.draw(screen)
-
-        pygame.display.flip()
-
-if __name__ == "__main__":
-    main()
-```
+### HUD
+- Left sidebar (WC2-style): resource display, minimap, unit panel, build menu
+- Single-unit panel: portrait placeholder + HP/stats
+- Build menu: thumbnail icons for each building, hover cost tooltip
+- Minimap: clickable to pan camera
 
 ## Milestone Plan
 
-### Phase 1 — Engine footing ✅ (Session 1 done)
-- Unit on screen, click-to-move, selection
+| Phase | Status | Description |
+|-------|--------|-------------|
+| 1 | ✅ | Unit on screen, click-to-move, selection |
+| 2 | ✅ | Box select, formation, A*, health, combat, gold |
+| 3 | ✅ | AI state machine: gather → build → attack |
+| 4 | ✅ | Skirmish map, fog of war, win/lose |
+| 5 | ✅ | Lumber, building placement, food cap, minimap |
+| 6 | ✅ | Tech tree: Blacksmith, Knight, upgrade prereqs |
+| 7 | ✅ | WC2 sprite pipeline, 8-dir walk, team colour, four tilesets |
+| 8 | 🔄 | Animation polish: worker carry walk sprites, gameplay feel |
+| 9 | ⬜ | Tech tree UI panel (visual upgrade screen with thumbnail icons) |
+| 10 | ⬜ | Orc faction units (Grunt, Peon, Troll, Ogre with correct sprites) |
 
-### Phase 2 — Core loop (Sessions 2–6)
-- Box selection (drag rectangle to select multiple units)
-- Group movement in formation
-- Obstacles (static rects blocking movement)
-- A* pathfinding around obstacles
-- Basic health + melee combat
-- One resource (gold), one building that trains units
+## Known gaps / next sessions
 
-### Phase 3 — Minimal AI opponent (Sessions 7–12)
-- AI state machine: gather → build → attack
-- AI harvests resources, trains units, attacks player
-- Tweak aggression, timing, target priority
-
-### Phase 4 — One playable map (Sessions 13–15)
-- Proper map with chokepoints, two bases, resource nodes
-- Win/lose condition
-- Playable skirmish
+- **Worker carry walk sprites** — WC2 carry animations exist in MAINDAT.WAR but are not mapped
+  in war2tools `sprites.c`. Fix requires adding PUD_UNIT constants for carry workers and
+  finding the correct archive entry numbers.
+- **Tech tree UI panel** — visual panel showing upgrade tree, costs, research buttons
+  with WC2 thumbnail icons.
+- **Orc faction** — Grunt/Peon/Troll/Ogre sprites extracted but unit types not fully wired.
+- **Carry indicator** — currently a colored dot/rect above the worker; replace once carry
+  walk sprites land.
 
 ## Key Design Decisions
-- Sprite size: 128x128px
-- Viewport: 1280x720
-- Movement: delta-time based (frame-rate independent)
-- Selection: single unit for now, box selection coming in Session 2
-- Pathfinding: A* (to be implemented in Session 2)
-
-## Session 2 Goals
-- Box selection (drag to select multiple units)
-- Group movement — selected units move in formation without stacking
-- Add static obstacles (rectangles)
-- A* pathfinding around obstacles
-
-## Godot Lessons Learned (for reference)
-- RectangleShape2D uses half-extents (set 16 to get 32px width)
-- Assets must use res:// paths, not absolute Windows paths
-- .import cache can corrupt and needs manual deletion to fix
-- get_rect() doesn't exist on CharacterBody2D
-- Ctrl+Shift+A has a recurring editor bug — spawn via code instead
-- 128x128 is the right sprite size for modern viewports
+- Viewport: 1280×720, HUD sidebar 160 px wide on the left
+- Grid: 32 px cells
+- Movement: delta-time based, frame-rate independent
+- Selection: box drag (>4 px) or click; `apply_selection()` in main.py
+- Pathfinding: A* with diagonal moves, corner-clipping prevention
+- Formation: spiral offsets around click point, one A* call per unit

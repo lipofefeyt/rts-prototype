@@ -36,24 +36,24 @@ Town Hall ──────────────────── Farm
 | Guard Tower | Human | Lumber Mill | 300 | 130g | — |
 | Watch Tower | Orc | Mill | 300 | 130g | — |
 
-> **Currently implemented:** Town Hall, Farm, Barracks, Gold Mine (neutral).
+> **Currently implemented:** Town Hall, Farm, Barracks, Lumber Mill, Blacksmith, Gold Mine, Trees.
 
 ---
 
 ## Units
 
-| Unit | Faction | Train at | Prereqs | HP | Dmg | Range | Speed | Cost | Time |
-|------|---------|----------|---------|-----|-----|-------|-------|------|------|
-| Worker | Human | Town Hall | — | 40 | 5 | 80 | 160 | 75g | 6 s |
-| Peon | Orc | Great Hall | — | 40 | 5 | 80 | 160 | 75g | 6 s |
-| Footman | Human | Barracks | — | 60 | 10 | 100 (melee) | 150 | 135g | 8 s |
-| Grunt | Orc | Barracks | — | 70 | 12 | 100 (melee) | 145 | 135g | 8 s |
-| Archer | Human | Barracks | — | 40 | 15 | 256 (ranged) | 130 | 150g | 10 s |
-| Troll Axethrower | Orc | Barracks | — | 40 | 12 | 256 (ranged) | 130 | 150g | 10 s |
-| Knight | Human | Barracks | Blacksmith | 90 | 20 | 110 (melee) | 120 | 220g | 14 s |
-| Ogre | Orc | Barracks | Foundry | 100 | 18 | 110 (melee) | 110 | 220g | 14 s |
+| Unit | Faction | Train at | Prereqs | HP | Dmg | Range | Speed | Cost | Time | Status |
+|------|---------|----------|---------|-----|-----|-------|-------|------|------|--------|
+| Worker | Human | Town Hall | — | 40 | 5 | 80 | 90 | 75g | 6 s | ✅ |
+| Peon | Orc | Great Hall | — | 40 | 5 | 80 | 90 | 75g | 6 s | sprites only |
+| Footman | Human | Barracks | — | 60 | 10 | 100 (melee) | 85 | 135g | 8 s | ✅ |
+| Grunt | Orc | Barracks | — | 70 | 12 | 100 (melee) | 85 | 135g | 8 s | sprites only |
+| Archer | Human | Barracks | — | 40 | 15 | 256 (ranged) | 75 | 150g | 10 s | ✅ |
+| Troll Axethrower | Orc | Barracks | — | 40 | 12 | 256 (ranged) | 75 | 150g | 10 s | sprites only |
+| Knight | Human | Barracks | Blacksmith | 150 | 20 | 96 (melee) | 80 | 800g | 25 s | ✅ |
+| Ogre | Orc | Barracks | Foundry | 100 | 18 | 110 (melee) | 80 | 220g | 14 s | — |
 
-> **Currently implemented:** Worker, Footman (Unit), Archer.
+> Speed values reflect current `stats.py` (~45% reduction from WC2 originals for feel).
 
 ---
 
@@ -69,36 +69,16 @@ Town Hall ──────────────────── Farm
 
 ---
 
-## How to enforce prereqs in code
+## Prereq enforcement (implemented)
 
-`stats.py` already has `UNIT_STATS`. Add a `requires` field:
-
-```python
-@dataclass(frozen=True)
-class UnitStats:
-    ...
-    requires: tuple[str, ...] = ()   # building labels that must exist
-
-UNIT_STATS = {
-    "footman": UnitStats(..., requires=()),
-    "archer":  UnitStats(..., requires=()),
-    "knight":  UnitStats(..., requires=("Blacksmith",)),
-}
-```
-
-Check in `draw_hud` / `Barracks.enqueue`:
-
-```python
-def _prereqs_met(unit_type: str, buildings: list) -> bool:
-    labels = {b.label for b in buildings if b.team == team and b.is_alive()}
-    return all(r in labels for r in UNIT_STATS[unit_type].requires)
-```
+`UnitStats.requires` is a tuple of building labels. `Barracks.enqueue` and the player build menu
+both check that all required buildings exist for the training team before allowing the action.
 
 ---
 
 ## Design principles
 
-- **Food cap governs pace** — each extra Farm lets you field 4 more units.
-- **Gold is the only resource** (wood dropped for simplicity; add a `Lumber` resource later if wanted).
-- **Symmetry first** — mirror Human/Orc stats ±10% so balance is easy to tune.
-- **One new Tier 2 unit at a time** — Knight is the natural next implementation target.
+- **Food cap governs pace** — each Farm adds 4 food; train queue blocks when food_used ≥ food_cap.
+- **Two resources** — gold (mine harvest, 100g/trip) and lumber (tree harvest, 10 lumber/chop).
+- **Symmetry first** — Human/Orc mirror stats; balance tuned by tweaking `stats.py`.
+- **Sprite pipeline first** — real WC2 art extracted from MAINDAT.WAR; carry walk sprites are the remaining gap.
