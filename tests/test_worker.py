@@ -1,6 +1,6 @@
 import pygame
 
-from unit import Worker
+from unit import Unit, Worker
 from building import GoldMine, Tree, TownHall
 from map import GameMap
 
@@ -84,3 +84,60 @@ def test_move_to_cancels_active_harvest():
     worker.move_to([pygame.Vector2(999, 999)])
     assert worker._wstate == "idle"
     assert mine.workers_inside == 0
+
+
+def _draw_and_capture_sheet(worker, monkeypatch):
+    """Monkeypatch Unit.draw to record which sheet was active, call
+    Worker.draw(), and return the sheet it was called with."""
+    seen = []
+    monkeypatch.setattr(Unit, "draw", lambda self, surface: seen.append(self._sheet))
+    worker.draw(pygame.Surface((10, 10)))
+    return seen[-1]
+
+
+def test_worker_draw_uses_gold_carry_sheet_while_carrying_gold(monkeypatch):
+    base_sheet, gold_sheet, lumber_sheet = object(), object(), object()
+    worker = Worker(0, 0, pygame.Surface((1, 1)), team=0, sheet=base_sheet,
+                     carry_gold_sheet=gold_sheet, carry_lumber_sheet=lumber_sheet)
+    worker._wstate = "to_hall"
+    worker._carrying = 10
+
+    assert _draw_and_capture_sheet(worker, monkeypatch) is gold_sheet
+    assert worker._sheet is base_sheet   # restored after draw, not left swapped
+
+
+def test_worker_draw_uses_lumber_carry_sheet_while_carrying_lumber(monkeypatch):
+    base_sheet, gold_sheet, lumber_sheet = object(), object(), object()
+    worker = Worker(0, 0, pygame.Surface((1, 1)), team=1, sheet=base_sheet,
+                     carry_gold_sheet=gold_sheet, carry_lumber_sheet=lumber_sheet)
+    worker._wstate = "to_hall_lumber"
+    worker._lumber_carrying = 25
+
+    assert _draw_and_capture_sheet(worker, monkeypatch) is lumber_sheet
+    assert worker._sheet is base_sheet
+
+
+def test_worker_draw_uses_base_sheet_when_not_carrying(monkeypatch):
+    base_sheet, gold_sheet, lumber_sheet = object(), object(), object()
+    worker = Worker(0, 0, pygame.Surface((1, 1)), team=0, sheet=base_sheet,
+                     carry_gold_sheet=gold_sheet, carry_lumber_sheet=lumber_sheet)
+
+    # Idle, nothing carried.
+    assert _draw_and_capture_sheet(worker, monkeypatch) is base_sheet
+
+    # In "to_hall" but cargo is 0 (e.g. right after the state flips, before
+    # the harvest amount is assigned) — must not show the carry sprite early.
+    worker._wstate = "to_hall"
+    worker._carrying = 0
+    assert _draw_and_capture_sheet(worker, monkeypatch) is base_sheet
+
+
+def test_worker_draw_falls_back_gracefully_without_carry_sheets(monkeypatch):
+    """No carry_gold_sheet/carry_lumber_sheet passed (e.g. assets not
+    extracted yet) — must not crash, and must keep using the base sheet."""
+    base_sheet = object()
+    worker = Worker(0, 0, pygame.Surface((1, 1)), team=0, sheet=base_sheet)
+    worker._wstate = "to_hall"
+    worker._carrying = 10
+
+    assert _draw_and_capture_sheet(worker, monkeypatch) is base_sheet
