@@ -14,6 +14,13 @@ Primary goal: game dev fundamentals, asset pipelines, AI state machines.
 - **Engine:** Pygame 2.6.1, Python 3.12, running natively in WSL2
 - Godot 4 was trialed and abandoned (editor friction in WSL2)
 
+## Testing
+
+`tests/` — pytest unit + black-box tests, plus a headless AI-vs-AI soak test; runs on every
+push/PR via GitHub Actions. See CLAUDE.md's "Testing" section for how to run locally. The
+soak test relies on `main.init_game_state()` / `main.simulate_frame()`, extracted from
+`run_game()` specifically so tests can drive the real simulation without a window.
+
 ## Current State (Session ~9)
 
 ### Gameplay

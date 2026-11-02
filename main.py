@@ -7,6 +7,7 @@ from ai import AIController, DIFFICULTY as AI_DIFFICULTY
 from stats import UNIT_STATS, UPGRADES
 from corpse import Corpse
 from projectile import Projectile
+from floattext import FloatText, GOLD_COLOUR, LUMBER_COLOUR
 from fog import FogOfWar
 from minimap import Minimap
 from sound import pre_init, load_sounds
@@ -98,7 +99,7 @@ def _get_icon(icon_id: int, size: "tuple[int,int]" = (36, 36)) -> "pygame.Surfac
         return None
     col, row = icon_id % 10, icon_id // 10
     try:
-        raw = _thumbnails_sheet.subsurface(pygame.Rect(col * 50 + 2, row * 39, 46, 38))
+        raw = _thumbnails_sheet.subsurface(pygame.Rect(col * 50 + 2, row * 41 + 5, 46, 38))
         if size == (46, 38):
             return raw.copy()
         return pygame.transform.smoothscale(raw, size)
@@ -327,10 +328,9 @@ def _draw_unit_info_panel(canvas: pygame.Surface, font: pygame.font.Font,
         pc = _PORTRAIT_BG.get(u.unit_type, (55, 55, 75))
         pygame.draw.rect(canvas, pc, pr)
         pygame.draw.rect(canvas, tuple(min(255, c + 70) for c in pc), pr, 2)
-        if u._sheet is not None:
-            # direction 4 = DIR_S, tick 0 → front-facing (direction-major idx=20)
-            pf = pygame.transform.scale(u._sheet.walk_frame(4, 0), (pr.width, pr.height))
-            canvas.blit(pf, pr)
+        icon = _get_icon(_ICON.get(u.unit_type, 0), (46, 38))
+        if icon:
+            canvas.blit(icon, icon.get_rect(center=pr.center))
         else:
             ab = font.render(u.unit_type[0].upper(), True, (220, 220, 220))
             canvas.blit(ab, ab.get_rect(center=pr.center))
@@ -531,7 +531,8 @@ def draw_hud(canvas: pygame.Surface, font: pygame.font.Font,
              build_mode: str | None = None,
              difficulty: str = "normal",
              mouse_pos: tuple = (0, 0),
-             team_upgrades: "set | None" = None) -> None:
+             team_upgrades: "set | None" = None,
+             attack_alert: float = 0.0) -> None:
     global _build_thumbs
     if team_upgrades is None:
         team_upgrades = set()
@@ -573,10 +574,13 @@ def draw_hud(canvas: pygame.Surface, font: pygame.font.Font,
         pygame.draw.line(canvas, (10, 11, 18),  (4, dy),     (SIDEBAR_W - 6, dy))
         pygame.draw.line(canvas, (60, 65, 90),  (4, dy + 1), (SIDEBAR_W - 6, dy + 1))
 
-    # Minimap panel border
+    # Minimap panel border — flashes red when under attack
     mini_rect = pygame.Rect(_MINI_SB_X - 2, _MINI_SB_Y - 2, 204, 114)
     pygame.draw.rect(canvas, (10, 11, 18),  mini_rect, 2)
-    pygame.draw.rect(canvas, (55, 60, 85),  mini_rect.inflate(-2, -2), 1)
+    if attack_alert > 0 and int(pygame.time.get_ticks() / 250) % 2:
+        pygame.draw.rect(canvas, (220, 40, 40), mini_rect.inflate(-2, -2), 2)
+    else:
+        pygame.draw.rect(canvas, (55, 60, 85),  mini_rect.inflate(-2, -2), 1)
 
     # Command area background panel
     _cmd_area = pygame.Rect(2, _SB_DIV2_Y + 2, SIDEBAR_W - 4, 120)
@@ -866,13 +870,351 @@ def _pos_to_grid(pos: pygame.Vector2) -> tuple[int, int]:
     return int(pos.x / CELL_SIZE), int(pos.y / CELL_SIZE)
 
 
+def init_game_state(difficulty: str = "normal", map_seed: "int | None" = None) -> dict:
+    """Build a fresh game world: map, buildings, units, resources, AI.
+
+    Pure setup, no pygame window/events/rendering — used by run_game() and by
+    headless test harnesses that drive simulate_frame() directly.
+    """
+    import random as _rand
+
+    load_building_sprites()
+    unit_sprites = load_unit_sprites()
+    war2_sheets  = load_war2_sprites()
+
+    def _sprite(unit_type: str, team: int) -> pygame.Surface:
+        return unit_sprites.get((unit_type, team), unit_sprites[('footman', team % 2)])
+
+    def _sheet(unit_type: str, team: int):
+        return war2_sheets.get((unit_type, team))
+
+    # --- Map ---
+    the_seed  = map_seed if map_seed is not None else _rand.randint(0, 0xFFFF)
+    tile_map  = generate_map(64, 64, seed=the_seed)
+    minimap   = Minimap(tile_map)   # bake minimap before conversion so forest shows dark-green
+
+    # Convert all non-border 'T' cells → 'G' and build Tree objects for each.
+    # Bitmasks are computed before conversion so all 'T' neighbors are still visible.
+    _fm_rows = len(tile_map)
+    _fm_cols = len(tile_map[0]) if tile_map else 64
+    _forest_cells: list[tuple[int, int]] = [
+        (_c, _r)
+        for _r in range(_fm_rows)
+        for _c in range(_fm_cols)
+        if tile_map[_r][_c] == 'T'
+    ]
+
+    def _tmask(c: int, r: int) -> int:
+        mask = 0
+        for bit, dc, dr in ((1, 0, -1), (2, 1, 0), (4, 0, 1), (8, -1, 0)):
+            nr, nc = r + dr, c + dc
+            if not (0 <= nr < _fm_rows and 0 <= nc < _fm_cols):
+                mask |= bit
+            elif tile_map[nr][nc] == 'T':
+                mask |= bit
+        return mask
+
+    _forest_bitmasks = {(c, r): _tmask(c, r) for c, r in _forest_cells}
+    for _r in range(_fm_rows):
+        if 'T' not in tile_map[_r]:
+            continue
+        tile_map[_r] = tile_map[_r].replace('T', 'G')
+    _forest_trees = [
+        Tree(_c * CELL_SIZE, _r * CELL_SIZE, bitmask=_forest_bitmasks[(_c, _r)])
+        for _c, _r in _forest_cells
+    ]
+
+    game_map  = GameMap(tile_map)
+    fog       = FogOfWar(game_map.grid_w, game_map.grid_h)
+    map_px_w  = game_map.grid_w * CELL_SIZE
+    map_px_h  = game_map.grid_h * CELL_SIZE
+
+    # --- Buildings ---
+    # Find clear base areas and lay out buildings relative to them
+    pc, pr = find_base_area(tile_map, 'left',  min_clear=12)
+    ec, er = find_base_area(tile_map, 'right', min_clear=12)
+
+    def _snap(v: int) -> int:
+        return (v // CELL_SIZE) * CELL_SIZE
+
+    # Player base layout (all positions grid-snapped)
+    px, py = pc * CELL_SIZE, pr * CELL_SIZE
+    p_hall_x = _snap(px)
+    p_hall_y = _snap(py + 4 * CELL_SIZE)   # 4 rows below base edge so mine has visual gap
+    # GoldMine: 3×3 cells, placed above TownHall with 3-row gap so peasant is visible
+    p_mine_x  = _snap(p_hall_x)
+    p_mine_y  = _snap(p_hall_y - GoldMine.H - 3 * CELL_SIZE)
+
+    # Enemy base layout (mirror: halls open toward river, i.e. toward left)
+    ex_right = (ec + 12) * CELL_SIZE   # rightmost column of enemy clear area
+    e_hall_x  = _snap(ex_right - TownHall.W - CELL_SIZE)
+    e_hall_y  = _snap(er * CELL_SIZE + 4 * CELL_SIZE)
+    e_mine_x  = _snap(e_hall_x + TownHall.W // 2)
+    e_mine_y  = _snap(e_hall_y - GoldMine.H - 3 * CELL_SIZE)
+
+    _fixed_bldgs: list = [
+        TownHall(p_hall_x, p_hall_y, team=0),
+        Barracks(p_hall_x, p_hall_y + TownHall.H + 3 * CELL_SIZE, team=0),
+        Farm(p_hall_x + TownHall.W + 3 * CELL_SIZE, p_hall_y, team=0),
+        Farm(p_hall_x + TownHall.W + 3 * CELL_SIZE, p_hall_y + Farm.H + 2 * CELL_SIZE, team=0),
+        TownHall(e_hall_x, e_hall_y, team=1),
+        Barracks(e_hall_x, e_hall_y + TownHall.H + 3 * CELL_SIZE, team=1),
+        Farm(e_hall_x - Farm.W - 3 * CELL_SIZE, e_hall_y, team=1),
+        Farm(e_hall_x - Farm.W - 3 * CELL_SIZE, e_hall_y + Farm.H + 2 * CELL_SIZE, team=1),
+        GoldMine(p_mine_x, p_mine_y),
+        GoldMine(e_mine_x, e_mine_y),
+    ]
+    _forest_trees = [t for t in _forest_trees
+                     if not any(t.rect.colliderect(b.rect) for b in _fixed_bldgs)]
+    buildings: list = _fixed_bldgs + _forest_trees
+
+    for b in buildings:
+        game_map.add_obstacle(b.rect)
+
+    player_hall = next(b for b in buildings if isinstance(b, TownHall) and b.team == 0)
+
+    # --- Units — spawned adjacent to their TownHall ---
+    def _spawn_near(hall, dx, dy, utype, team):
+        x = _snap(hall.rect.right + dx)
+        y = _snap(hall.rect.top   + dy)
+        return x, y
+
+    ph = player_hall
+    eh = next(b for b in buildings if isinstance(b, TownHall) and b.team == 1)
+
+    # Spawn in the 3-cell gap between TownHall and Farm (not on the farm).
+    _p_sx = ph.rect.right + CELL_SIZE
+    _e_sx = eh.rect.left  - CELL_SIZE
+    units: list = [
+        Unit(_p_sx, ph.rect.centery - 16,
+             _sprite('footman', 0), team=0, sheet=_sheet('footman', 0)),
+        Unit(_p_sx, ph.rect.centery + 16,
+             _sprite('footman', 0), team=0, sheet=_sheet('footman', 0)),
+        Worker(_p_sx, ph.rect.centery + 48,
+               _sprite('worker', 0), team=0, sheet=_sheet('worker', 0)),
+        Unit(_e_sx, eh.rect.centery - 16,
+             _sprite('footman', 1), team=1, sheet=_sheet('footman', 1)),
+        Worker(_e_sx, eh.rect.centery + 32,
+               _sprite('worker', 1), team=1, sheet=_sheet('worker', 1)),
+    ]
+
+    corpses: list[Corpse] = []
+    projectiles: list[Projectile] = []
+    float_texts: list[FloatText] = []
+
+    gold: dict[int, int] = {0: 500, 1: 500}
+    lumber: dict[int, int] = {0: 200, 1: 200}
+    upgrades: dict[int, set] = {0: set(), 1: set()}   # completed research IDs per team
+    selected: list = []
+    selected_building = None
+
+    ai = AIController(
+        team=1, buildings=buildings, units=units, gold=gold, lumber=lumber,
+        game_map=game_map,
+        enemy_sprite=_sprite('footman', 1),
+        worker_sprite=_sprite('worker',  1),
+        sheets=war2_sheets,
+        difficulty=difficulty,
+    )
+
+    return dict(
+        game_map=game_map, fog=fog, minimap=minimap, tile_map=tile_map,
+        map_px_w=map_px_w, map_px_h=map_px_h,
+        buildings=buildings, units=units,
+        corpses=corpses, projectiles=projectiles, float_texts=float_texts,
+        gold=gold, lumber=lumber, upgrades=upgrades,
+        selected=selected, selected_building=selected_building,
+        ai=ai, unit_sprites=unit_sprites, war2_sheets=war2_sheets,
+        the_seed=the_seed, player_hall=player_hall,
+    )
+
+
+def simulate_frame(dt: float, units: list, buildings: list, gold: dict, lumber: dict,
+                    corpses: list, projectiles: list, float_texts: list, upgrades: dict,
+                    ai, game_map, fog, selected: list, selected_building,
+                    attack_alert: float, elapsed: float,
+                    font: pygame.font.Font, play_sound, sprite, sheet) -> tuple:
+    """Advance the simulation by exactly one frame.
+
+    Pure state transition: no pygame events, input polling, or drawing — this is
+    the entry point headless tests drive directly. Returns the (possibly rebound)
+    mutable state: (units, buildings, corpses, projectiles, selected,
+    selected_building, attack_alert, elapsed, game_over).
+    """
+    elapsed += dt
+    ai.update(dt)
+
+    player_units = [u for u in units if u.team == 0]
+    enemy_units  = [u for u in units if u.team == 1]
+    for u in player_units:
+        u.update(dt, enemy_units, game_map)
+    for u in enemy_units:
+        u.update(dt, player_units, game_map)
+
+    # Unit separation — push overlapping units apart
+    _SEP_DIST = 28.0
+    _SEP_STR  = 80.0
+    all_units = player_units + enemy_units
+    for i in range(len(all_units)):
+        u = all_units[i]
+        for j in range(i + 1, len(all_units)):
+            v = all_units[j]
+            diff = u.pos - v.pos
+            dist = diff.length()
+            if 0 < dist < _SEP_DIST:
+                push = diff.normalize() * (_SEP_DIST - dist) / _SEP_DIST * _SEP_STR * dt
+                u.pos += push
+                v.pos -= push
+                u.rect.center = (int(u.pos.x), int(u.pos.y))
+                v.rect.center = (int(v.pos.x), int(v.pos.y))
+
+    # Drain archer projectiles
+    for u in units:
+        if isinstance(u, Archer) and u.projectiles_pending:
+            projectiles.extend(u.projectiles_pending)
+            u.projectiles_pending.clear()
+
+    # Gold + lumber harvesting
+    for u in units:
+        if isinstance(u, Worker):
+            if u.gold_delivered:
+                gold[u.team] += u.gold_delivered
+                if u.team == 0:
+                    float_texts.append(FloatText(
+                        f"+{u.gold_delivered}", GOLD_COLOUR, u.pos, font))
+                u.gold_delivered = 0
+            if u.lumber_delivered:
+                lumber[u.team] += u.lumber_delivered
+                if u.team == 0:
+                    float_texts.append(FloatText(
+                        f"+{u.lumber_delivered}", LUMBER_COLOUR, u.pos, font))
+                u.lumber_delivered = 0
+
+    # Under-attack detection: any player unit or building hit this frame?
+    attack_alert = max(0.0, attack_alert - dt)
+    if any(u._hit_flash > 0 for u in units if u.team == 0):
+        attack_alert = 3.0
+    elif any(b._hit_flash > 0 for b in buildings if b.team == 0):
+        attack_alert = 3.0
+
+    # Construction progress + lumber mill carry bonus
+    for b in buildings:
+        b.update_construction(dt)
+    for b in buildings:
+        if isinstance(b, LumberMill) and b.is_complete:
+            if not getattr(b, '_carry_bonus_applied', False):
+                b._carry_bonus_applied = True
+                cap = Worker.LUMBER_CARRY_CAP + LumberMill.CARRY_BONUS
+                for u in units:
+                    if isinstance(u, Worker) and u.team == b.team:
+                        u._lumber_carry_cap = cap
+
+    def _apply_upgrades(unit: Unit, team: int) -> None:
+        """Apply all completed research effects to a newly created unit."""
+        for rid in upgrades.get(team, set()):
+            spec = UPGRADES[rid]
+            for ut, stat, delta in spec.effects:
+                if unit.unit_type == ut:
+                    setattr(unit, stat, getattr(unit, stat) + delta)
+                    if stat == "max_hp":
+                        unit.hp = unit.max_hp
+
+    # Research queues (Blacksmith + LumberMill)
+    for b in buildings:
+        if not isinstance(b, (Blacksmith, LumberMill)):
+            continue
+        for rid in b.update(dt):
+            spec = UPGRADES[rid]
+            upgrades[b.team].add(rid)
+            # Apply to all existing units of the affected types
+            for u in units:
+                if u.team != b.team:
+                    continue
+                for ut, stat, delta in spec.effects:
+                    if u.unit_type == ut:
+                        setattr(u, stat, getattr(u, stat) + delta)
+                        if stat == "max_hp":
+                            u.hp = min(u.hp + delta, u.max_hp)
+            if b.team == 0:
+                play_sound('train_done')
+
+    # Training queues (Barracks + TownHall)
+    for b in buildings:
+        if not isinstance(b, (Barracks, TownHall)):
+            continue
+        for unit_type in b.update(dt):
+            sp = pygame.Vector2(b.rect.right + 40, b.rect.centery)
+            new_unit: Unit
+            if unit_type == "worker":
+                new_unit = Worker(sp.x, sp.y, sprite('worker', b.team), team=b.team,
+                                  sheet=sheet('worker', b.team))
+                if any(isinstance(bld, LumberMill) and bld.team == b.team and bld.is_complete
+                       for bld in buildings):
+                    new_unit._lumber_carry_cap = Worker.LUMBER_CARRY_CAP + LumberMill.CARRY_BONUS
+            elif unit_type == "archer":
+                new_unit = Archer(sp.x, sp.y, sprite('archer', b.team), team=b.team,
+                                  sheet=sheet('archer', b.team))
+            elif unit_type == "knight":
+                new_unit = Unit(sp.x, sp.y, sprite('knight', b.team), team=b.team,
+                                unit_type="knight", sheet=sheet('knight', b.team))
+            else:
+                new_unit = Unit(sp.x, sp.y, sprite('footman', b.team), team=b.team,
+                                sheet=sheet('footman', b.team))
+            _apply_upgrades(new_unit, b.team)
+            units.append(new_unit)
+            if b.team == 0:
+                play_sound('train_done')
+
+    # Push apart units that share a cell (1×1 tile separation)
+    for i, u1 in enumerate(units):
+        for u2 in units[i + 1:]:
+            diff = u1.pos - u2.pos
+            d = diff.length_squared()
+            if 0 < d < CELL_SIZE * CELL_SIZE:
+                sep = diff * ((CELL_SIZE / d ** 0.5 - 1) * 0.5)
+                u1.pos += sep
+                u1.rect.center = (int(u1.pos.x), int(u1.pos.y))
+                u2.pos -= sep
+                u2.rect.center = (int(u2.pos.x), int(u2.pos.y))
+
+    # Corpse + sound on death
+    for u in units:
+        if not u.is_alive():
+            corpses.append(Corpse(u.pos, u.team, sheet=u._sheet))
+            play_sound('death')
+
+    units = [u for u in units if u.is_alive()]
+    selected = [u for u in selected if u.is_alive()]
+
+    corpses = [c for c in corpses if c.update(dt)]
+    projectiles = [p for p in projectiles if p.update(dt)]
+
+    for b in buildings:
+        if isinstance(b, Tree) and not b.is_alive():
+            game_map.remove_obstacle(b.rect)
+    buildings = [b for b in buildings if b.is_alive()]
+    if selected_building is not None and not selected_building.is_alive():
+        selected_building.selected = False
+        selected_building = None
+
+    player_bldgs = [b for b in buildings if b.team == 0]
+    fog.update(player_units + player_bldgs)
+
+    game_over = None
+    if not any(isinstance(b, TownHall) and b.team == 1 for b in buildings):
+        game_over = "victory"
+    elif not any(isinstance(b, TownHall) and b.team == 0 for b in buildings):
+        game_over = "defeat"
+
+    return (units, buildings, corpses, projectiles, selected, selected_building,
+            attack_alert, elapsed, game_over)
+
+
 def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
              font: pygame.font.Font, big_font: pygame.font.Font,
              difficulty: str = "normal",
              map_seed: "int | None" = None) -> "tuple[bool, str, int | None]":
     """Play one match. Returns (restart, difficulty, next_seed)."""
-    import random as _rand
-
     # Internal render canvas — all game drawing goes here at a fixed 1280×720.
     # At frame end it's scaled to whatever the display surface is.
     canvas = pygame.Surface((WIDTH, HEIGHT))
@@ -922,10 +1264,31 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
         except pygame.error:
             pass
 
+    # --- Game world setup (map, buildings, units, resources, AI) ---
+    state = init_game_state(difficulty, map_seed)
+    game_map     = state['game_map']
+    fog          = state['fog']
+    minimap      = state['minimap']
+    tile_map     = state['tile_map']
+    map_px_w     = state['map_px_w']
+    map_px_h     = state['map_px_h']
+    buildings    = state['buildings']
+    units        = state['units']
+    corpses      = state['corpses']
+    projectiles  = state['projectiles']
+    float_texts  = state['float_texts']
+    gold         = state['gold']
+    lumber       = state['lumber']
+    upgrades     = state['upgrades']
+    selected     = state['selected']
+    selected_building = state['selected_building']
+    ai           = state['ai']
+    unit_sprites = state['unit_sprites']
+    war2_sheets  = state['war2_sheets']
+    the_seed     = state['the_seed']
+    player_hall  = state['player_hall']
+
     # --- Sprites ---
-    load_building_sprites()
-    unit_sprites = load_unit_sprites()
-    war2_sheets  = load_war2_sprites()
     global _thumbnails_sheet
     try:
         _thumbnails_sheet = pygame.image.load(
@@ -940,47 +1303,6 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
     def _sheet(unit_type: str, team: int):
         return war2_sheets.get((unit_type, team))
 
-    # --- Map ---
-    the_seed  = map_seed if map_seed is not None else _rand.randint(0, 0xFFFF)
-    tile_map  = generate_map(64, 64, seed=the_seed)
-    minimap   = Minimap(tile_map)   # bake minimap before conversion so forest shows dark-green
-
-    # Convert all non-border 'T' cells → 'G' and build Tree objects for each.
-    # Bitmasks are computed before conversion so all 'T' neighbors are still visible.
-    _fm_rows = len(tile_map)
-    _fm_cols = len(tile_map[0]) if tile_map else 64
-    _forest_cells: list[tuple[int, int]] = [
-        (_c, _r)
-        for _r in range(_fm_rows)
-        for _c in range(_fm_cols)
-        if tile_map[_r][_c] == 'T'
-    ]
-
-    def _tmask(c: int, r: int) -> int:
-        mask = 0
-        for bit, dc, dr in ((1, 0, -1), (2, 1, 0), (4, 0, 1), (8, -1, 0)):
-            nr, nc = r + dr, c + dc
-            if not (0 <= nr < _fm_rows and 0 <= nc < _fm_cols):
-                mask |= bit
-            elif tile_map[nr][nc] == 'T':
-                mask |= bit
-        return mask
-
-    _forest_bitmasks = {(c, r): _tmask(c, r) for c, r in _forest_cells}
-    for _r in range(_fm_rows):
-        if 'T' not in tile_map[_r]:
-            continue
-        tile_map[_r] = tile_map[_r].replace('T', 'G')
-    _forest_trees = [
-        Tree(_c * CELL_SIZE, _r * CELL_SIZE, bitmask=_forest_bitmasks[(_c, _r)])
-        for _c, _r in _forest_cells
-    ]
-
-    game_map  = GameMap(tile_map)
-    fog       = FogOfWar(game_map.grid_w, game_map.grid_h)
-    map_px_w  = game_map.grid_w * CELL_SIZE
-    map_px_h  = game_map.grid_h * CELL_SIZE
-
     # Camera
     cam    = pygame.Vector2(0, 0)
     cam_ix = cam_iy = 0   # integer snapshots updated each frame
@@ -993,103 +1315,18 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
     # Move-order click marker: (world_x, world_y, life_remaining_s) or None
     _move_marker: "tuple | None" = None
 
-    # --- Buildings ---
-    # Find clear base areas and lay out buildings relative to them
-    pc, pr = find_base_area(tile_map, 'left',  min_clear=12)
-    ec, er = find_base_area(tile_map, 'right', min_clear=12)
-
-    def _snap(v: int) -> int:
-        return (v // CELL_SIZE) * CELL_SIZE
-
-    # Player base layout (all positions grid-snapped)
-    px, py = pc * CELL_SIZE, pr * CELL_SIZE
-    p_hall_x = _snap(px)
-    p_hall_y = _snap(py + 4 * CELL_SIZE)   # 4 rows below base edge so mine has visual gap
-    # GoldMine: 3×3 cells, placed above TownHall with 3-row gap so peasant is visible
-    p_mine_x  = _snap(p_hall_x)
-    p_mine_y  = _snap(p_hall_y - GoldMine.H - 3 * CELL_SIZE)
-
-    # Enemy base layout (mirror: halls open toward river, i.e. toward left)
-    ex_right = (ec + 12) * CELL_SIZE   # rightmost column of enemy clear area
-    e_hall_x  = _snap(ex_right - TownHall.W - CELL_SIZE)
-    e_hall_y  = _snap(er * CELL_SIZE + 4 * CELL_SIZE)
-    e_mine_x  = _snap(e_hall_x + TownHall.W // 2)
-    e_mine_y  = _snap(e_hall_y - GoldMine.H - 3 * CELL_SIZE)
-
-    _fixed_bldgs: list = [
-        TownHall(p_hall_x, p_hall_y, team=0),
-        Barracks(p_hall_x, p_hall_y + TownHall.H + 3 * CELL_SIZE, team=0),
-        Farm(p_hall_x + TownHall.W + 3 * CELL_SIZE, p_hall_y, team=0),
-        Farm(p_hall_x + TownHall.W + 3 * CELL_SIZE, p_hall_y + Farm.H + 2 * CELL_SIZE, team=0),
-        TownHall(e_hall_x, e_hall_y, team=1),
-        Barracks(e_hall_x, e_hall_y + TownHall.H + 3 * CELL_SIZE, team=1),
-        Farm(e_hall_x - Farm.W - 3 * CELL_SIZE, e_hall_y, team=1),
-        Farm(e_hall_x - Farm.W - 3 * CELL_SIZE, e_hall_y + Farm.H + 2 * CELL_SIZE, team=1),
-        GoldMine(p_mine_x, p_mine_y),
-        GoldMine(e_mine_x, e_mine_y),
-    ]
-    _forest_trees = [t for t in _forest_trees
-                     if not any(t.rect.colliderect(b.rect) for b in _fixed_bldgs)]
-    buildings: list = _fixed_bldgs + _forest_trees
-
-    for b in buildings:
-        game_map.add_obstacle(b.rect)
-
-    player_hall = next(b for b in buildings if isinstance(b, TownHall) and b.team == 0)
-
     # Start camera centered on the player's TownHall
     cam.x = max(0, min(map_px_w - WIDTH,  player_hall.rect.centerx - WIDTH  // 2))
     cam.y = max(0, min(map_px_h - HEIGHT, player_hall.rect.centery - HEIGHT // 2))
 
-    # --- Units — spawned adjacent to their TownHall ---
-    def _spawn_near(hall, dx, dy, utype, team):
-        x = _snap(hall.rect.right + dx)
-        y = _snap(hall.rect.top   + dy)
-        return x, y
-
-    ph = player_hall
-    eh = next(b for b in buildings if isinstance(b, TownHall) and b.team == 1)
-
-    # Spawn in the 3-cell gap between TownHall and Farm (not on the farm).
-    _p_sx = ph.rect.right + CELL_SIZE
-    _e_sx = eh.rect.left  - CELL_SIZE
-    units: list = [
-        Unit(_p_sx, ph.rect.centery - 16,
-             _sprite('footman', 0), team=0, sheet=_sheet('footman', 0)),
-        Unit(_p_sx, ph.rect.centery + 16,
-             _sprite('footman', 0), team=0, sheet=_sheet('footman', 0)),
-        Worker(_p_sx, ph.rect.centery + 48,
-               _sprite('worker', 0), team=0, sheet=_sheet('worker', 0)),
-        Unit(_e_sx, eh.rect.centery - 16,
-             _sprite('footman', 1), team=1, sheet=_sheet('footman', 1)),
-        Worker(_e_sx, eh.rect.centery + 32,
-               _sprite('worker', 1), team=1, sheet=_sheet('worker', 1)),
-    ]
-
-    corpses: list[Corpse] = []
-    projectiles: list[Projectile] = []
-
-    gold: dict[int, int] = {0: 500, 1: 500}
-    lumber: dict[int, int] = {0: 200, 1: 200}
-    upgrades: dict[int, set] = {0: set(), 1: set()}   # completed research IDs per team
-    selected: list = []
-    selected_building = None
     drag_start: pygame.Vector2 | None = None
     drag_current: pygame.Vector2 | None = None
     game_over: str | None = None
     elapsed: float = 0.0
+    attack_alert: float = 0.0   # seconds remaining on "under attack" flash
     build_mode: str | None = None   # "farm" | "barracks" | None
     tech_tree_open: bool = False
     build_ghost: tuple[int, int] = (0, 0)
-
-    ai = AIController(
-        team=1, buildings=buildings, units=units, gold=gold, lumber=lumber,
-        game_map=game_map,
-        enemy_sprite=_sprite('footman', 1),
-        worker_sprite=_sprite('worker',  1),
-        sheets=war2_sheets,
-        difficulty=difficulty,
-    )
 
     while True:
         dt = clock.tick(FPS) / 1000.0
@@ -1393,154 +1630,11 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
 
         # ---- Update (frozen when game over) ----
         if game_over is None:
-            elapsed += dt
-            ai.update(dt)
-
-            player_units = [u for u in units if u.team == 0]
-            enemy_units  = [u for u in units if u.team == 1]
-            for u in player_units:
-                u.update(dt, enemy_units, game_map)
-            for u in enemy_units:
-                u.update(dt, player_units, game_map)
-
-            # Unit separation — push overlapping units apart
-            _SEP_DIST = 28.0
-            _SEP_STR  = 80.0
-            all_units = player_units + enemy_units
-            for i in range(len(all_units)):
-                u = all_units[i]
-                for j in range(i + 1, len(all_units)):
-                    v = all_units[j]
-                    diff = u.pos - v.pos
-                    dist = diff.length()
-                    if 0 < dist < _SEP_DIST:
-                        push = diff.normalize() * (_SEP_DIST - dist) / _SEP_DIST * _SEP_STR * dt
-                        u.pos += push
-                        v.pos -= push
-                        u.rect.center = (int(u.pos.x), int(u.pos.y))
-                        v.rect.center = (int(v.pos.x), int(v.pos.y))
-
-            # Drain archer projectiles
-            for u in units:
-                if isinstance(u, Archer) and u.projectiles_pending:
-                    projectiles.extend(u.projectiles_pending)
-                    u.projectiles_pending.clear()
-
-            # Gold + lumber harvesting
-            for u in units:
-                if isinstance(u, Worker):
-                    gold[u.team] += u.gold_delivered
-                    u.gold_delivered = 0
-                    lumber[u.team] += u.lumber_delivered
-                    u.lumber_delivered = 0
-
-            # Construction progress + lumber mill carry bonus
-            for b in buildings:
-                b.update_construction(dt)
-            for b in buildings:
-                if isinstance(b, LumberMill) and b.is_complete:
-                    if not getattr(b, '_carry_bonus_applied', False):
-                        b._carry_bonus_applied = True
-                        cap = Worker.LUMBER_CARRY_CAP + LumberMill.CARRY_BONUS
-                        for u in units:
-                            if isinstance(u, Worker) and u.team == b.team:
-                                u._lumber_carry_cap = cap
-
-            def _apply_upgrades(unit: Unit, team: int) -> None:
-                """Apply all completed research effects to a newly created unit."""
-                for rid in upgrades.get(team, set()):
-                    spec = UPGRADES[rid]
-                    for ut, stat, delta in spec.effects:
-                        if unit.unit_type == ut:
-                            setattr(unit, stat, getattr(unit, stat) + delta)
-                            if stat == "max_hp":
-                                unit.hp = unit.max_hp
-
-            # Research queues (Blacksmith + LumberMill)
-            for b in buildings:
-                if not isinstance(b, (Blacksmith, LumberMill)):
-                    continue
-                for rid in b.update(dt):
-                    spec = UPGRADES[rid]
-                    upgrades[b.team].add(rid)
-                    # Apply to all existing units of the affected types
-                    for u in units:
-                        if u.team != b.team:
-                            continue
-                        for ut, stat, delta in spec.effects:
-                            if u.unit_type == ut:
-                                setattr(u, stat, getattr(u, stat) + delta)
-                                if stat == "max_hp":
-                                    u.hp = min(u.hp + delta, u.max_hp)
-                    if b.team == 0:
-                        _play('train_done')
-
-            # Training queues (Barracks + TownHall)
-            for b in buildings:
-                if not isinstance(b, (Barracks, TownHall)):
-                    continue
-                for unit_type in b.update(dt):
-                    sp = pygame.Vector2(b.rect.right + 40, b.rect.centery)
-                    new_unit: Unit
-                    if unit_type == "worker":
-                        new_unit = Worker(sp.x, sp.y, _sprite('worker', b.team), team=b.team,
-                                          sheet=_sheet('worker', b.team))
-                        if any(isinstance(bld, LumberMill) and bld.team == b.team and bld.is_complete
-                               for bld in buildings):
-                            new_unit._lumber_carry_cap = Worker.LUMBER_CARRY_CAP + LumberMill.CARRY_BONUS
-                    elif unit_type == "archer":
-                        new_unit = Archer(sp.x, sp.y, _sprite('archer', b.team), team=b.team,
-                                          sheet=_sheet('archer', b.team))
-                    elif unit_type == "knight":
-                        new_unit = Unit(sp.x, sp.y, _sprite('knight', b.team), team=b.team,
-                                        unit_type="knight", sheet=_sheet('knight', b.team))
-                    else:
-                        new_unit = Unit(sp.x, sp.y, _sprite('footman', b.team), team=b.team,
-                                        sheet=_sheet('footman', b.team))
-                    _apply_upgrades(new_unit, b.team)
-                    units.append(new_unit)
-                    if b.team == 0:
-                        _play('train_done')
-
-            # Push apart units that share a cell (1×1 tile separation)
-            for i, u1 in enumerate(units):
-                for u2 in units[i + 1:]:
-                    diff = u1.pos - u2.pos
-                    d = diff.length_squared()
-                    if 0 < d < CELL_SIZE * CELL_SIZE:
-                        sep = diff * ((CELL_SIZE / d ** 0.5 - 1) * 0.5)
-                        u1.pos += sep
-                        u1.rect.center = (int(u1.pos.x), int(u1.pos.y))
-                        u2.pos -= sep
-                        u2.rect.center = (int(u2.pos.x), int(u2.pos.y))
-
-            # Corpse + sound on death
-            for u in units:
-                if not u.is_alive():
-                    corpses.append(Corpse(u.pos, u.team, sheet=u._sheet))
-                    _play('death')
-
-            units = [u for u in units if u.is_alive()]
-            selected = [u for u in selected if u.is_alive()]
-
-            corpses = [c for c in corpses if c.update(dt)]
-            projectiles = [p for p in projectiles if p.update(dt)]
-
-            for b in buildings:
-                if isinstance(b, Tree) and not b.is_alive():
-                    game_map.remove_obstacle(b.rect)
-            buildings = [b for b in buildings if b.is_alive()]
-            if selected_building is not None and not selected_building.is_alive():
-                selected_building.selected = False
-                selected_building = None
-
-            player_bldgs = [b for b in buildings if b.team == 0]
-            fog.update(player_units + player_bldgs)
-
-            if not any(isinstance(b, TownHall) and b.team == 1 for b in buildings):
-                game_over = "victory"
-            elif not any(isinstance(b, TownHall) and b.team == 0 for b in buildings):
-                game_over = "defeat"
+            (units, buildings, corpses, projectiles, selected, selected_building,
+             attack_alert, elapsed, game_over) = simulate_frame(
+                dt, units, buildings, gold, lumber, corpses, projectiles, float_texts,
+                upgrades, ai, game_map, fog, selected, selected_building, attack_alert,
+                elapsed, font, _play, _sprite, _sheet)
 
         # ---- Draw world objects to world_surf ----
         world_surf.fill((0, 0, 0))
@@ -1563,6 +1657,10 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
 
         for p in projectiles:
             p.draw(world_surf)
+
+        float_texts[:] = [ft for ft in float_texts if ft.update(dt)]
+        for ft in float_texts:
+            ft.draw(world_surf)
 
         # ---- Blit visible portion of world_surf into game viewport (right of sidebar) ----
         canvas.blit(world_surf, (SIDEBAR_W, 0),
@@ -1641,11 +1739,12 @@ def run_game(screen: pygame.Surface, clock: pygame.time.Clock,
         draw_hud(canvas, font, gold, lumber, buildings, units, selected, selected_building,
                  ai.state, muted, fullscreen, build_mode=build_mode, difficulty=difficulty,
                  mouse_pos=to_game(pygame.mouse.get_pos()),
-                 team_upgrades=upgrades[0])
+                 team_upgrades=upgrades[0], attack_alert=attack_alert)
         # Draw minimap AFTER draw_hud so the sidebar fill doesn't overwrite it
         _mm_bldgs = [b for b in buildings if not isinstance(b, Tree)]
         minimap.draw(canvas, _mm_bldgs, units, dest_xy=(_MINI_SB_X, _MINI_SB_Y),
-                     cam=(cam_ix, cam_iy), viewport=(WIDTH - SIDEBAR_W, HEIGHT))
+                     cam=(cam_ix, cam_iy), viewport=(WIDTH - SIDEBAR_W, HEIGHT),
+                     visible=fog._visible)
 
         if tech_tree_open:
             draw_tech_tree(canvas, font, big_font, buildings, upgrades[0])
