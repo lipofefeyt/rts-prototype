@@ -1,9 +1,11 @@
 # WC2 Thumbnail Icon Catalog
 
-Source: `thumbnails.png` — 500×745 px, 10 columns × 19 rows, 46×38 px per icon.
+Source: `thumbnails.png` — 500×745 px, 10 columns × 18 rows, 46×38 px per icon.
 
 **Position formula:** `row = icon_id // 10`, `col = icon_id % 10`
-**Pixel rect:** `x = col * 50 + 2`, `y = row * 39`, `w = 46`, `h = 38`
+**Pixel rect:** `x = col * 50 + 2`, `y = row * 41 + 5`, `w = 46`, `h = 38`
+
+Sheet layout: 5px outer borders top/bottom, each icon row is 41px (3px bright top-frame + 38px content). Stride = 41px.
 
 ---
 
@@ -227,6 +229,6 @@ def get_icon(sheet: pygame.Surface, icon_id: int) -> pygame.Surface:
     col = icon_id % 10
     row = icon_id // 10
     x = col * 50 + 2
-    y = row * 39
+    y = row * 41 + 5   # skip 5px outer border; stride=41 (3px bright frame + 38px content)
     return sheet.subsurface(pygame.Rect(x, y, 46, 38))
 ```

@@ -105,6 +105,12 @@ _SHEET_NAMES: dict[tuple, str] = {
     ('worker',  1): 'peon_team1',
     ('knight',  0): 'knight_team0',
     ('knight',  1): 'ogre_team1',
+    # Worker carry-walk variants — archive entries with no PUD_UNIT id, see
+    # tools/extract_war2_sprites.py's CARRY_ENTRIES for provenance.
+    ('worker_gold',   0): 'peasant_gold_team0',
+    ('worker_gold',   1): 'peon_gold_team1',
+    ('worker_lumber', 0): 'peasant_lumber_team0',
+    ('worker_lumber', 1): 'peon_lumber_team1',
 }
 
 

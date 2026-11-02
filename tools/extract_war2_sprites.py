@@ -54,6 +54,21 @@ PLAYERS = [
     ("team1", 1),   # PUD_PLAYER_BLUE  (orc red  in WC2)
 ]
 
+# Worker carry-walk sprites: not reachable through the Pud_Unit enum at all
+# (war2tools' libwar2 sprites.c only dispatches named PUD_UNIT_* ids to archive
+# entries; there's no PUD_UNIT_PEASANT_WITH_GOLD etc). Entry numbers below are
+# confirmed against our maindat.war (65 raw frames each, matching the base
+# peasant/peon entries 47/48) and cross-checked against corepunch/open-rts's
+# own test assertions for the same archive:
+#   https://github.com/corepunch/open-rts/pull/52 (w2_load_carriers entries[])
+# (name, raw archive entry, Pud_Player id, walk_frames_per_dir, directions)
+CARRY_ENTRIES = [
+    ("peasant_gold",   124, 0, 5, 8),   # human peasant, carrying gold
+    ("peasant_lumber", 122, 0, 5, 8),   # human peasant, carrying wood
+    ("peon_gold",      125, 1, 5, 8),   # orc peon, carrying gold
+    ("peon_lumber",    123, 1, 5, 8),   # orc peon, carrying wood
+]
+
 PUD_ERA_FOREST = 0   # tileset doesn't matter for unit sprites
 
 # ---------------------------------------------------------------------------
@@ -98,6 +113,13 @@ def load_libs():
         ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int,
         SpriteCB, ctypes.c_void_p,
     ]
+    # Lower-level entry: Pud_Unit enum bypass — decodes a raw archive entry
+    # number directly, used for sprites with no PUD_UNIT_* id (carry-walk).
+    libwar2.war2_sprites_decode_entry.restype  = ctypes.c_uint
+    libwar2.war2_sprites_decode_entry.argtypes = [
+        ctypes.c_void_p, ctypes.c_int, ctypes.c_uint,
+        SpriteCB, ctypes.c_void_p,
+    ]
     return libwar2
 
 # ---------------------------------------------------------------------------
@@ -125,6 +147,27 @@ def extract_unit(libwar2, w2_handle, unit_name: str, unit_id: int,
 
     cb = SpriteCB(on_sprite)
     libwar2.war2_sprites_decode(w2_handle, player_id, PUD_ERA_FOREST, unit_id, cb, None)
+    return frames
+
+
+def extract_entry(libwar2, w2_handle, entry: int, player_id: int) -> dict:
+    """Same as extract_unit(), but decodes a raw archive entry number
+    directly — for sprites with no PUD_UNIT_* id (carry-walk)."""
+    frames: list[dict] = []
+
+    def on_sprite(_data, pixels, _x, _y, w, h, _sd, frame_id):
+        n = w * h
+        buf = bytearray(4 * n)
+        for i in range(n):
+            p = pixels[i]
+            buf[4*i]   = p.r
+            buf[4*i+1] = p.g
+            buf[4*i+2] = p.b
+            buf[4*i+3] = p.a
+        frames.append({"id": int(frame_id), "w": int(w), "h": int(h), "rgba": bytes(buf)})
+
+    cb = SpriteCB(on_sprite)
+    libwar2.war2_sprites_decode_entry(w2_handle, player_id, entry, cb, None)
     return frames
 
 # ---------------------------------------------------------------------------
@@ -206,6 +249,30 @@ def main():
                 print(f"  walk subset ({walk_count} frames) → {walk_path}")
 
             manifest[label] = info
+
+    for name, entry, player_id, walk_per_dir, directions in CARRY_ENTRIES:
+        team_label = "team0" if player_id == 0 else "team1"
+        label = f"{name}_{team_label}"
+        print(f"Extracting {label} (entry {entry}) ...", flush=True)
+
+        frames = extract_entry(libwar2, w2, entry, player_id)
+        if not frames:
+            print(f"  ⚠ no frames returned — skipping")
+            continue
+
+        all_path = os.path.join(OUT_DIR, f"{label}_all.png")
+        info = save_strip(frames, all_path)
+        print(f"  {len(frames)} frames → {all_path}")
+
+        walk_count = walk_per_dir * directions
+        walk_frames = [f for f in frames if f["id"] < walk_count]
+        if walk_frames:
+            walk_path = os.path.join(OUT_DIR, f"{label}_walk.png")
+            walk_info = save_strip(walk_frames, walk_path)
+            info["walk"] = walk_info
+            print(f"  walk subset ({walk_count} frames) → {walk_path}")
+
+        manifest[label] = info
 
     libwar2.war2_close(w2)
     libwar2.war2_shutdown()

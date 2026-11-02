@@ -63,6 +63,11 @@ Runs on every push/PR via `.github/workflows/tests.yml`. Three layers, all under
 - 5 stored directions: N, NE, E, SE, S (indices 0–4); SW/W/NW are mirrors of SE/E/NE
 - `vel_to_dir(v)` maps velocity → 8-way direction 0–7; `strip_dir()` maps to 0–4 + flip flag
 - Walk poses 0–4, attack poses 5–7 (Footman/Archer) or 5–9 (Worker, 5 attack poses), death fills the rest
+- **Worker carry-walk sprites**: `peasant_gold`/`peasant_lumber`/`peon_gold`/`peon_lumber` — archive
+  entries 124/122/125/123, which have no `PUD_UNIT_*` id in war2tools and must be decoded via
+  `war2_sprites_decode_entry()` directly (see `tools/extract_war2_sprites.py`'s `CARRY_ENTRIES`).
+  Same pose-major/5-direction layout as the base worker sheet. `Worker.draw()` swaps `self._sheet`
+  to the matching carry sheet while `_wstate` is `to_hall`/`to_hall_lumber`.
 
 ### Data flow for a right-click move
 1. `main.py` computes per-unit formation targets around the click point
@@ -130,4 +135,4 @@ before assuming what exists.
 | 5 | ✅ | Lumber, building placement, food cap, minimap |
 | 6 | ✅ | Tech tree: Blacksmith, Knight, upgrade prereqs |
 | 7 | ✅ | WC2 sprite pipeline, 8-dir walk, team colour, four tilesets |
-| 8 | 🔄 | Animation polish: worker carry visuals, gameplay feel |
+| 8 | ✅ | Animation polish: worker carry visuals, gameplay feel |

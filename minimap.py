@@ -54,21 +54,35 @@ class Minimap:
     def draw(self, surface: pygame.Surface, buildings: list, units: list,
              dest_xy: "tuple | None" = None,
              cam: "tuple[int,int]" = (0, 0),
-             viewport: "tuple[int,int]" = (1060, 720)) -> None:
+             viewport: "tuple[int,int]" = (1060, 720),
+             visible: "set | None" = None) -> None:
         self._buf.blit(self._terrain, (0, 0))
 
         for b in buildings:
+            if b.team == 1 and visible is not None:
+                bc = (int(b.pos.x) // CELL_SIZE, int(b.pos.y) // CELL_SIZE)
+                if bc not in visible:
+                    continue
             mx = int(b.pos.x * self._sx)
             my = int(b.pos.y * self._sy)
             color = _TEAM_DOT.get(b.team, (200, 200, 200))
+            # Dark outline then colour fill for buildings
+            pygame.draw.rect(self._buf, (0, 0, 0),
+                             (max(0, mx - 4), max(0, my - 4), 8, 8))
             pygame.draw.rect(self._buf, color,
                              (max(0, mx - 3), max(0, my - 3), 6, 6))
 
         for u in units:
+            if u.team == 1 and visible is not None:
+                uc = (int(u.pos.x) // CELL_SIZE, int(u.pos.y) // CELL_SIZE)
+                if uc not in visible:
+                    continue
             mx = int(u.pos.x * self._sx)
             my = int(u.pos.y * self._sy)
             color = _TEAM_DOT.get(u.team, (200, 200, 200))
-            pygame.draw.circle(self._buf, color, (mx, my), 2)
+            r = 3 if u.team == 0 else 2
+            pygame.draw.circle(self._buf, (0, 0, 0), (mx, my), r + 1)
+            pygame.draw.circle(self._buf, color, (mx, my), r)
 
         # Viewport rectangle
         vx = int(cam[0] * self._sx)

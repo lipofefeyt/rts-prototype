@@ -130,6 +130,7 @@ class Building:
         # Build timer starts at build_time → buildings are complete by default.
         # Call start_construction() right after __init__ to begin a countdown.
         self._build_timer: float = self.build_time
+        self._hit_flash: float = 0.0
 
     @property
     def is_complete(self) -> bool:
@@ -142,6 +143,7 @@ class Building:
             self.hp = 1
 
     def update_construction(self, dt: float) -> None:
+        self._hit_flash = max(0.0, self._hit_flash - dt)
         if self.is_complete:
             return
         self._build_timer = min(self.build_time, self._build_timer + dt)

@@ -95,7 +95,10 @@ class AIController:
         if not workers and self.gold[self.team] >= WORKER_REPLACE_COST:
             sp = pygame.Vector2(hall.rect.right + 40, hall.rect.centery)
             sheet = self.sheets.get(('worker', self.team))
-            self.units.append(Worker(sp.x, sp.y, self.worker_sprite, team=self.team, sheet=sheet))
+            carry_gold = self.sheets.get(('worker_gold', self.team))
+            carry_lumber = self.sheets.get(('worker_lumber', self.team))
+            self.units.append(Worker(sp.x, sp.y, self.worker_sprite, team=self.team, sheet=sheet,
+                                     carry_gold_sheet=carry_gold, carry_lumber_sheet=carry_lumber))
             self.gold[self.team] -= WORKER_REPLACE_COST
 
     def _tick_training(self) -> None:

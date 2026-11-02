@@ -991,11 +991,13 @@ def init_game_state(difficulty: str = "normal", map_seed: "int | None" = None) -
         Unit(_p_sx, ph.rect.centery + 16,
              _sprite('footman', 0), team=0, sheet=_sheet('footman', 0)),
         Worker(_p_sx, ph.rect.centery + 48,
-               _sprite('worker', 0), team=0, sheet=_sheet('worker', 0)),
+               _sprite('worker', 0), team=0, sheet=_sheet('worker', 0),
+               carry_gold_sheet=_sheet('worker_gold', 0), carry_lumber_sheet=_sheet('worker_lumber', 0)),
         Unit(_e_sx, eh.rect.centery - 16,
              _sprite('footman', 1), team=1, sheet=_sheet('footman', 1)),
         Worker(_e_sx, eh.rect.centery + 32,
-               _sprite('worker', 1), team=1, sheet=_sheet('worker', 1)),
+               _sprite('worker', 1), team=1, sheet=_sheet('worker', 1),
+               carry_gold_sheet=_sheet('worker_gold', 1), carry_lumber_sheet=_sheet('worker_lumber', 1)),
     ]
 
     corpses: list[Corpse] = []
@@ -1147,7 +1149,9 @@ def simulate_frame(dt: float, units: list, buildings: list, gold: dict, lumber: 
             new_unit: Unit
             if unit_type == "worker":
                 new_unit = Worker(sp.x, sp.y, sprite('worker', b.team), team=b.team,
-                                  sheet=sheet('worker', b.team))
+                                  sheet=sheet('worker', b.team),
+                                  carry_gold_sheet=sheet('worker_gold', b.team),
+                                  carry_lumber_sheet=sheet('worker_lumber', b.team))
                 if any(isinstance(bld, LumberMill) and bld.team == b.team and bld.is_complete
                        for bld in buildings):
                     new_unit._lumber_carry_cap = Worker.LUMBER_CARRY_CAP + LumberMill.CARRY_BONUS

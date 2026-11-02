@@ -116,8 +116,9 @@ class Unit:
 
     _DIR_HOLD = 4   # frames a new direction must be stable before committing
 
-    # Pixels of movement per animation frame advance (one pose switch per half-tile)
-    _ANIM_DIST_PER_FRAME: float = 16.0
+    # Walk animation rate — time-based so all units cycle at the same visual rhythm
+    # regardless of their movement speed (faster units take bigger steps, not faster steps).
+    _WALK_FPS: float = 6.5
 
     def _update_anim(self, vel: pygame.Vector2, dt: float) -> None:
         if self._sheet is None:
@@ -132,7 +133,7 @@ class Unit:
                 self._dir_frames = 1
             if self._dir_frames >= self._DIR_HOLD:
                 self._last_dir = candidate
-            self._anim_timer += dist
+            self._anim_timer += dt
             self._moving = True
         else:
             self._moving = False
@@ -168,7 +169,7 @@ class Unit:
                 atk_tick = int((0.3 - self._attack_anim_timer) / 0.1)
                 frame = self._sheet.attack_frame(self._last_dir, atk_tick)
             else:
-                tick = int(self._anim_timer / self._ANIM_DIST_PER_FRAME) if self._moving else 0
+                tick = int(self._anim_timer * self._WALK_FPS) if self._moving else 0
                 walk_pose = (1 + tick % 4) if self._moving else 0
                 frame = self._sheet.walk_frame(self._last_dir, walk_pose)
             if self._draw_scale != 1.0:
@@ -275,7 +276,8 @@ class Worker(Unit):
     LUMBER_CARRY_CAP = 25
     CHOP_TIME = 5.0
 
-    def __init__(self, x: float, y: float, image: pygame.Surface, team: int = 0, sheet=None):
+    def __init__(self, x: float, y: float, image: pygame.Surface, team: int = 0, sheet=None,
+                 carry_gold_sheet=None, carry_lumber_sheet=None):
         super().__init__(x, y, image, team, unit_type="worker", sheet=sheet)
         self.gold_delivered = 0
         self.lumber_delivered = 0
@@ -289,6 +291,8 @@ class Worker(Unit):
         self._lumber_carry_cap = self.LUMBER_CARRY_CAP
         self._chop_timer = 0.0
         self._buildings_ref: list | None = None  # set by order_chop for auto-cycle
+        self._carry_gold_sheet = carry_gold_sheet       # WC2 carry-walk sprite, gold
+        self._carry_lumber_sheet = carry_lumber_sheet   # WC2 carry-walk sprite, lumber
 
     @property
     def inside_building(self) -> bool:
@@ -444,8 +448,23 @@ class Worker(Unit):
         self.rect.center = (int(self.pos.x), int(self.pos.y))
 
     def draw(self, surface: pygame.Surface) -> None:
+        carry_sheet = None
+        if self._wstate == "to_hall" and self._carrying > 0:
+            carry_sheet = self._carry_gold_sheet
+        elif self._wstate == "to_hall_lumber" and self._lumber_carrying > 0:
+            carry_sheet = self._carry_lumber_sheet
+
+        if carry_sheet is not None:
+            # Temporarily swap in the WC2 carry-walk sheet so the base draw()
+            # picks it up via the normal walk_frame() path.
+            original_sheet, self._sheet = self._sheet, carry_sheet
+            super().draw(surface)
+            self._sheet = original_sheet
+            return
+
         super().draw(surface)
-        # Carry indicator: positioned 12px above the health bar anchor
+        # Fallback indicator for when carry sprites aren't available (e.g.
+        # assets not yet extracted) — positioned 12px above the health bar anchor.
         cx = self.rect.centerx
         cy = self.rect.centery - int(30 * self._draw_scale) - 20
         if self._wstate == "to_hall" and self._carrying > 0:
