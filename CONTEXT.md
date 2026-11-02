@@ -75,7 +75,7 @@ Primary goal: game dev fundamentals, asset pipelines, AI state machines.
 | 6 | ✅ | Tech tree: Blacksmith, Knight, upgrade prereqs |
 | 7 | ✅ | WC2 sprite pipeline, 8-dir walk, team colour, four tilesets |
 | 8 | 🔄 | Animation polish: worker carry walk sprites, gameplay feel |
-| 9 | ⬜ | Tech tree UI panel (visual upgrade screen with thumbnail icons) |
+| 9 | ✅ | Tech tree UI panel (visual upgrade screen with thumbnail icons) |
 | 10 | ⬜ | Orc faction units (Grunt, Peon, Troll, Ogre with correct sprites) |
 
 ## Known gaps / next sessions
@@ -83,8 +83,6 @@ Primary goal: game dev fundamentals, asset pipelines, AI state machines.
 - **Worker carry walk sprites** — WC2 carry animations exist in MAINDAT.WAR but are not mapped
   in war2tools `sprites.c`. Fix requires adding PUD_UNIT constants for carry workers and
   finding the correct archive entry numbers.
-- **Tech tree UI panel** — visual panel showing upgrade tree, costs, research buttons
-  with WC2 thumbnail icons.
 - **Orc faction** — Grunt/Peon/Troll/Ogre sprites extracted but unit types not fully wired.
 - **Carry indicator** — currently a colored dot/rect above the worker; replace once carry
   walk sprites land.
